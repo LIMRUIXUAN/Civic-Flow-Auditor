@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blue-Market AI Agent Hackathon Shortlist</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f3ed;
+      --paper: #fffdf8;
+      --ink: #1e2428;
+      --muted: #687178;
+      --line: #d7d0c4;
+      --accent: #b76e1f;
+      --accent-soft: #f4dfc6;
+      --good: #27745f;
+      --warn: #b76e1f;
+      --bad: #a64135;
+      --blue: #315f86;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #15171a;
+        --paper: #202327;
+        --ink: #f2efe8;
+        --muted: #b6aea4;
+        --line: #3b3f43;
+        --accent-soft: #3a2d21;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(980px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    header {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-top: 8px solid var(--accent);
+      padding: 28px;
+      border-radius: 8px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.12;
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 6vw, 4.4rem);
+      max-width: 900px;
+    }
+
+    h2 {
+      font-size: 1.45rem;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration-thickness: 1px;
+    }
+
+    .kicker {
+      color: var(--accent);
+      font-weight: 800;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      margin-bottom: 14px;
+    }
+
+    .verdict {
+      display: grid;
+      gap: 10px;
+      margin-top: 22px;
+      padding: 18px;
+      background: var(--accent-soft);
+      border-radius: 8px;
+      border: 1px solid color-mix(in srgb, var(--accent), var(--line) 45%);
+    }
+
+    .verdict strong {
+      font-size: 1.35rem;
+    }
+
+    section {
+      margin-top: 22px;
+      padding: 24px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .meters {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .meter {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 120px;
+    }
+
+    .meter span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+    }
+
+    .bar {
+      height: 10px;
+      margin: 12px 0;
+      background: color-mix(in srgb, var(--line), transparent 30%);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar i {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 11px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+    }
+
+    .rank {
+      font-weight: 900;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.74rem;
+      font-weight: 800;
+      border: 1px solid var(--line);
+      color: var(--ink);
+      background: color-mix(in srgb, var(--paper), var(--bg) 45%);
+      white-space: nowrap;
+    }
+
+    .pill.good {
+      color: var(--good);
+      border-color: color-mix(in srgb, var(--good), var(--line) 40%);
+    }
+
+    .pill.warn {
+      color: var(--warn);
+      border-color: color-mix(in srgb, var(--warn), var(--line) 40%);
+    }
+
+    .pill.bad {
+      color: var(--bad);
+      border-color: color-mix(in srgb, var(--bad), var(--line) 40%);
+    }
+
+    .ideas {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .idea {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 270px;
+    }
+
+    .idea h3 {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .idea dl {
+      margin: 12px 0 0;
+    }
+
+    .idea dt {
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      margin-top: 10px;
+    }
+
+    .idea dd {
+      margin: 3px 0 0;
+    }
+
+    .audit {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .audit div {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .source-list {
+      columns: 2 280px;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 760px) {
+      main {
+        width: min(100% - 20px, 980px);
+      }
+
+      header, section {
+        padding: 18px;
+      }
+
+      .meters, .ideas, .audit {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+    }
+
+    @media print {
+      :root {
+        --bg: #ffffff;
+        --paper: #ffffff;
+        --ink: #111111;
+        --muted: #555555;
+        --line: #cccccc;
+        --accent-soft: #f3e6d5;
+      }
+
+      body {
+        background: #ffffff;
+      }
+
+      main {
+        width: 100%;
+        padding: 0;
+      }
+
+      header, section {
+        break-inside: avoid;
+        box-shadow: none;
+      }
+
+      a {
+        color: #111111;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="kicker">Kaggle AI Agents Capstone - Blue-Market Stress Test</div>
+      <h1>Seven underserved AI-agent project ideas worth testing now</h1>
+      <div class="verdict">
+        <strong>Verdict: shortlist the top 3, build 1. Confidence: 72%.</strong>
+        <p>The strongest hackathon bets are civic accessibility auditing, benefits recertification help, and job scam defense. They have visible pain, public data, agent-native workflows, and a credible demo path inside a four-day window.</p>
+      </div>
+    </header>
+
+    <section>
+      <h2>Score Meters</h2>
+      <div class="meters">
+        <div class="meter">
+          <span>Problem Evidence</span>
+          <div class="bar"><i style="width: 86%"></i></div>
+          <p><strong>Strong.</strong> Sources include FTC, ADA.gov, AHRQ, AMA, Michigan 211, Urban Institute, and nonprofit-sector reports.</p>
+        </div>
+        <div class="meter">
+          <span>Hackathon Fit</span>
+          <div class="bar"><i style="width: 78%"></i></div>
+          <p><strong>Good.</strong> Most can be built with document intake, retrieval, tool calls, scoring, and a human-readable action plan.</p>
+        </div>
+        <div class="meter">
+          <span>Blue-Market Gap</span>
+          <div class="bar"><i style="width: 68%"></i></div>
+          <p><strong>Mixed-to-strong.</strong> Some categories have incumbents, but the underserved wedge is narrower, local, and workflow-heavy.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>TL;DR</h2>
+      <ul>
+        <li><strong>Build #1 if you want the cleanest Kaggle story:</strong> Civic Access Auditor. It uses agents, public web data, compliance rules, and practical output.</li>
+        <li><strong>Build #2 if you want social-impact weight:</strong> Benefits Churn Navigator. It targets people losing help because paperwork and notices are hard.</li>
+        <li><strong>Build #3 if you want a sharp demo:</strong> Job Scam Shield. The before/after value is instantly understandable in a five-minute video.</li>
+        <li><strong>Avoid overbuilding.</strong> The winning submission needs a working agentic workflow, not a full company.</li>
+        <li><strong>Hard warning:</strong> healthcare, education, benefits, and legal-adjacent projects must be framed as decision support, not professional advice.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>The Seven Ideas</h2>
+      <div class="ideas">
+        <article class="idea">
+          <h3><span class="rank">01</span> Civic Access Auditor <span class="pill good">Best bet</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>Small city clerks, school districts, special districts, and residents with disabilities.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>State and local government web content, mobile apps, and documents must meet WCAG 2.1 AA, but small entities lack audit capacity.</dd>
+            <dt>Agent build</dt>
+            <dd>Crawl a public site, inspect pages and PDFs, classify ADA risk, draft remediation tickets, suggest alt text, and produce a compliance roadmap.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Agents for Good or Agents for Business.</dd>
+            <dt>48-hour test</dt>
+            <dd>Run on two small public sites and compare top issues against a manual checker. Success: 80% of top-10 issues are valid and actionable.</dd>
+          </dl>
+        </article>
+
+        <article class="idea">
+          <h3><span class="rank">02</span> Benefits Churn Navigator <span class="pill good">High impact</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>SNAP, Medicaid, utility-assistance, and housing-aid applicants who miss renewal steps or cannot match documents to requirements.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>Eligible people lose coverage or benefits because notices, interviews, work requirements, and recertification packets are confusing.</dd>
+            <dt>Agent build</dt>
+            <dd>Parse a notice, extract deadlines, ask for missing docs, create a checklist, connect to 211-style resources, and prepare a call script.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Agents for Good or Concierge Agents.</dd>
+            <dt>48-hour test</dt>
+            <dd>Use five public/sample notices. Success: the agent finds all deadlines, required documents, and next actions without hallucinated eligibility claims.</dd>
+          </dl>
+        </article>
+
+        <article class="idea">
+          <h3><span class="rank">03</span> Job Scam Shield <span class="pill good">Demo-friendly</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>Job seekers, new graduates, laid-off workers, international students, and remote-work applicants.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>AI-made fake recruiters and polished job offers are harder to spot than old scam emails.</dd>
+            <dt>Agent build</dt>
+            <dd>Analyze job posts, recruiter messages, domains, payment requests, interview flow, and public company signals. Produce a risk score and verification script.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Concierge Agents or Agents for Good.</dd>
+            <dt>48-hour test</dt>
+            <dd>Classify 20 known real/fake job examples. Success: 85%+ accuracy with explanation grounded in visible evidence.</dd>
+          </dl>
+        </article>
+
+        <article class="idea">
+          <h3><span class="rank">04</span> Rental Proof Agent <span class="pill good">Clear pain</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>Renters searching on Facebook Marketplace, Craigslist, and informal housing groups.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>Fake listings copy real photos, change contact information, and pressure renters to pay before verification.</dd>
+            <dt>Agent build</dt>
+            <dd>Review listing text, address clues, duplicate photos, payment asks, ownership hints, and safe-tour requirements. Output a verification report.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Concierge Agents.</dd>
+            <dt>48-hour test</dt>
+            <dd>Test 10 sample listings. Success: catches duplicated-photo and upfront-payment patterns while giving non-alarmist next steps.</dd>
+          </dl>
+        </article>
+
+        <article class="idea">
+          <h3><span class="rank">05</span> Care Transition Copilot <span class="pill warn">Scope carefully</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>Family caregivers taking someone home after a hospital stay.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>Discharge paperwork is dense; people miss medication changes, follow-ups, warning signs, and who to call.</dd>
+            <dt>Agent build</dt>
+            <dd>Turn discharge instructions into a calendar, medication schedule, red-flag watchlist, and "questions for the nurse" checklist.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Concierge Agents or Agents for Good.</dd>
+            <dt>48-hour test</dt>
+            <dd>Use synthetic discharge packets. Success: no medical advice, all tasks trace back to source text, and every risky item says "call clinician."</dd>
+          </dl>
+        </article>
+
+        <article class="idea">
+          <h3><span class="rank">06</span> Grant Burden Reducer <span class="pill good">Business angle</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>Small nonprofits without dedicated grants staff.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>Grant reports, budgets, attachments, metrics, and funder-specific formats consume hours that should go to programs.</dd>
+            <dt>Agent build</dt>
+            <dd>Ingest a funder report template plus program notes, receipts, and outcomes; draft the report, flag missing evidence, and maintain a deadline ledger.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Agents for Business or Agents for Good.</dd>
+            <dt>48-hour test</dt>
+            <dd>Use three funder templates and one mock nonprofit dataset. Success: reduces report assembly time by 50% in a timed demo.</dd>
+          </dl>
+        </article>
+
+        <article class="idea">
+          <h3><span class="rank">07</span> IEP Meeting Prep Agent <span class="pill warn">Legal guardrails</span></h3>
+          <dl>
+            <dt>Who hurts</dt>
+            <dd>Parents of students with disabilities, especially first-time IEP families and non-English-speaking households.</dd>
+            <dt>Unsolved problem</dt>
+            <dd>IEP meetings move quickly, documents are acronym-heavy, and parents often do not know what to ask or track.</dd>
+            <dt>Agent build</dt>
+            <dd>Summarize the IEP, compare goals year over year, translate jargon, generate questions, and create an action log after the meeting.</dd>
+            <dt>Hackathon track</dt>
+            <dd>Agents for Good or Concierge Agents.</dd>
+            <dt>48-hour test</dt>
+            <dd>Use two public/sample IEP-like documents. Success: finds goals, services, accommodations, missing dates, and parent questions without legal advice.</dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Market And Timing</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Idea</th>
+            <th>Why now</th>
+            <th>Current workaround</th>
+            <th>Gap to exploit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Civic Access Auditor</td>
+            <td>ADA Title II web and app compliance dates were extended to 2027/2028, creating urgency without much local capacity.</td>
+            <td>Manual audits, enterprise tools, consultants.</td>
+            <td>Low-cost triage for small public entities and PDF-heavy sites.</td>
+          </tr>
+          <tr>
+            <td>Benefits Churn Navigator</td>
+            <td>Renewal and documentation burdens are rising, while 211 data shows unmet needs in housing and utilities.</td>
+            <td>Hotlines, caseworkers, portals, paper notices.</td>
+            <td>Personalized checklist and deadline agent for applicants, not agencies.</td>
+          </tr>
+          <tr>
+            <td>Job Scam Shield</td>
+            <td>FTC published 2026 alerts on fake recruiter texts and task scams; GenAI makes scams more convincing.</td>
+            <td>Static scam advice, browser extensions, platform moderation.</td>
+            <td>Explainable verification workflow for one specific job offer.</td>
+          </tr>
+          <tr>
+            <td>Rental Proof Agent</td>
+            <td>FTC reported major rental scam losses and copied-listing behavior in 2025.</td>
+            <td>Manual reverse-image checks, platform reports, "trust your gut."</td>
+            <td>A renter-side evidence packet before sending money.</td>
+          </tr>
+          <tr>
+            <td>Care Transition Copilot</td>
+            <td>AHRQ identifies discharge as a high-risk transition where patients and caregivers absorb complex tasks.</td>
+            <td>Paper discharge packets, patient portals, medication reminder apps.</td>
+            <td>Source-grounded task plan from dense paperwork.</td>
+          </tr>
+          <tr>
+            <td>Grant Burden Reducer</td>
+            <td>Small nonprofits face duplicated applications, reporting formats, and reimbursement constraints.</td>
+            <td>Spreadsheets, grant portals, consultant help.</td>
+            <td>Post-award reporting assembly for small teams.</td>
+          </tr>
+          <tr>
+            <td>IEP Meeting Prep Agent</td>
+            <td>Parents need organized reports, concerns, questions, and progress evidence before meetings.</td>
+            <td>Advocates, guides, binders, emerging English-only AI tools.</td>
+            <td>Plain-language, multilingual prep and meeting follow-through.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Competitive Landscape</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Representative alternatives</th>
+            <th>They are strong at</th>
+            <th>Gap they leave</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Accessibility auditing</td>
+            <td>Siteimprove, Monsido/Acquia, Silktide, free checkers.</td>
+            <td>Enterprise monitoring and page-level checks.</td>
+            <td>Small-public-entity action plans, PDF triage, and plain-English remediation tickets.</td>
+          </tr>
+          <tr>
+            <td>Benefits navigation</td>
+            <td>211, Single Stop, Findhelp/Uno Health, local agency portals.</td>
+            <td>Screening, resource databases, enterprise enrollment workflows.</td>
+            <td>Applicant-side renewal notice parsing and document mismatch detection.</td>
+          </tr>
+          <tr>
+            <td>Scam defense</td>
+            <td>FTC guidance, Norton Genie, browser extensions, platform moderation.</td>
+            <td>Broad scam advice and threat intelligence.</td>
+            <td>Job-offer- or rental-specific verification reports with user next steps.</td>
+          </tr>
+          <tr>
+            <td>Caregiving</td>
+            <td>Medisafe, CareZone, Caring Village, patient portals.</td>
+            <td>Medication reminders, shared calendars, caregiver coordination.</td>
+            <td>Extracting a task plan directly from discharge paperwork.</td>
+          </tr>
+          <tr>
+            <td>Grant management</td>
+            <td>Instrumentl, Foundant, Submittable, GrantStation.</td>
+            <td>Discovery, applications, grant tracking, CRM workflows.</td>
+            <td>Lean nonprofit post-award report assembly from messy program artifacts.</td>
+          </tr>
+          <tr>
+            <td>IEP support</td>
+            <td>Undivided IEP Assistant, IEP Advocate.ai, IEP Compass, parent advocates.</td>
+            <td>IEP review, parent prep, guided advocacy.</td>
+            <td>Multilingual comparison, meeting action logs, and source-cited non-legal guidance.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Founder Fit Assumption</h2>
+      <p>This report cannot score your founder-market fit because I do not yet know your background, data access, team size, or unfair channel. I scored instead for hackathon fit: a solo or small team, four days left, public/synthetic data, and a need to show at least three agent concepts such as ADK, MCP, security guardrails, deployment, and agent skills.</p>
+      <p><strong>Best founder fit if you are technical but domain-light:</strong> Civic Access Auditor, Job Scam Shield, Rental Proof Agent. These can be validated from public examples without needing protected data.</p>
+      <p><strong>Best founder fit if you have lived experience or domain access:</strong> Benefits Churn Navigator, Care Transition Copilot, IEP Meeting Prep Agent, Grant Burden Reducer.</p>
+    </section>
+
+    <section>
+      <h2>Capital And Resource Reality</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Risk</th>
+            <th>Reality check</th>
+            <th>Scope control</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Data privacy</td>
+            <td>Benefits, health, education, and grant documents can contain sensitive information.</td>
+            <td>Use synthetic/sample docs, local redaction, and a "do not upload secrets" warning.</td>
+          </tr>
+          <tr>
+            <td>Professional advice</td>
+            <td>Some ideas border on legal, medical, benefits, or special education advice.</td>
+            <td>Position as document organization and question generation; always recommend qualified human review.</td>
+          </tr>
+          <tr>
+            <td>Tool reliability</td>
+            <td>Web search, OCR, and public data can be incomplete or stale.</td>
+            <td>Show citations, confidence labels, and source snippets for every output.</td>
+          </tr>
+          <tr>
+            <td>Build time</td>
+            <td>Full apps are too large for the remaining window.</td>
+            <td>Ship one narrow workflow: intake, retrieval, agent reasoning, action plan, export.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Macro Risk Audit</h2>
+      <div class="audit">
+        <div>
+          <h3>Platform risk: Maybe</h3>
+          <p class="small">Search, LLM, browser, OCR, and platform APIs may change. Keep the demo portable and cite sources.</p>
+        </div>
+        <div>
+          <h3>Regulatory wall: Yes</h3>
+          <p class="small">Healthcare, benefits, education, and accessibility all have compliance surfaces. Use synthetic data and strict disclaimers.</p>
+        </div>
+        <div>
+          <h3>Commoditization: Maybe</h3>
+          <p class="small">Generic LLMs can summarize documents; the moat is workflow, grounding, checks, and domain-specific output.</p>
+        </div>
+        <div>
+          <h3>Substitution: Maybe</h3>
+          <p class="small">Broad AI assistants and security tools will absorb simple scam checks. Narrow, auditable workflows still matter.</p>
+        </div>
+        <div>
+          <h3>Cycle reversal: No</h3>
+          <p class="small">These are not ZIRP-only pains. Paperwork, scams, accessibility, and care coordination persist across cycles.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Devil's Advocate Findings</h2>
+      <ul>
+        <li><strong>Prior authorization is painful but crowded.</strong> AMA data is brutal, but free tools like Fight Health Insurance and Counterforce already exist. Build only if you have a narrower clinic workflow.</li>
+        <li><strong>Benefits navigation can accidentally overpromise.</strong> The agent must never say someone is eligible with certainty. It should say what documents and next steps are visible.</li>
+        <li><strong>Healthcare and IEP ideas are trust-sensitive.</strong> Hallucinated advice can harm people. Use citations, source-grounding, and "ask a professional" handoff points.</li>
+        <li><strong>Scam tools face a substitution clock.</strong> Norton-style scam detection is moving inside general AI assistants, so the defensible wedge is job/rental-specific verification workflow.</li>
+        <li><strong>Accessibility auditing can become shallow.</strong> Automated checkers miss many human accessibility issues. Your demo should call this out and focus on triage, not full certification.</li>
+        <li><strong>Grant tools are crowded at the top of funnel.</strong> Avoid "AI grant writer." Focus on post-award reporting and evidence tracking, where small nonprofits still drown.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Recommendation</h2>
+      <p><strong>Pick Civic Access Auditor unless you have a strong personal connection to another domain.</strong> It has a deadline-driven market, public inputs, visible outputs, lower personal-data risk, and a strong architecture story: crawler agent, accessibility-rule retrieval, PDF/OCR worker, remediation planner, and report generator.</p>
+      <p><strong>Named experiment:</strong> the Two-Site Triage Test. Scan two small public agency sites, generate the top 10 issues per site, then manually verify with a browser accessibility checker and document review. Build only if at least 16 of 20 issues are real, source-linked, and phrased as clear tickets a clerk or developer could act on.</p>
+    </section>
+
+    <section>
+      <h2>Sources</h2>
+      <ul class="source-list">
+        <li><a href="https://www.ada.gov/resources/2024-03-08-web-rule/">ADA.gov: Title II web and mobile accessibility rule</a></li>
+        <li><a href="https://www.ftc.gov/news-events/data-visualizations/data-spotlight/2025/12/rental-scams-hit-home-65-million-reported-losses">FTC: Rental scams and $65 million reported losses</a></li>
+        <li><a href="https://consumer.ftc.gov/all-scams/job-scams">FTC Consumer Advice: Job scams</a></li>
+        <li><a href="https://www.ama-assn.org/press-center/ama-press-releases/ama-survey-prior-authorization-reform-pledge-falls-short-physicians">AMA: Prior authorization burden survey</a></li>
+        <li><a href="https://www.michigan.gov/mdhhs/-/media/Project/Websites/mdhhs/Inside-MDHHS/Budget-and-Finance/Legislative-Reports-FY25/Section_465-4_PA_121_of_2024.pdf">Michigan 211 FY2025 report</a></li>
+        <li><a href="https://www.commonwealthfund.org/publications/issue-briefs/2025/jun/reducing-medicaid-churn-policies-promote-stable-health-coverage">Commonwealth Fund: Reducing Medicaid churn</a></li>
+        <li><a href="https://www.urban.org/sites/default/files/2025-09/SNAP-Experiences-Summary.pdf">Urban Institute: SNAP recertification and paperwork burdens</a></li>
+        <li><a href="https://psnet.ahrq.gov/primer/discharge-planning-and-transitions-care">AHRQ PSNet: Discharge planning and transitions of care</a></li>
+        <li><a href="https://psnet.ahrq.gov/perspective/patient-safety-during-hospital-discharge">AHRQ PSNet: Patient safety during hospital discharge</a></li>
+        <li><a href="https://www.councilofnonprofits.org/trends-and-policy-issues/state-policy-tax-law/common-problems-government-nonprofit-grants-and">National Council of Nonprofits: Government-nonprofit grant problems</a></li>
+        <li><a href="https://exponentphilanthropy.org/blog/how-to-simplify-grant-applications-and-reports-for-nonprofits/">Exponent Philanthropy: Grant application and reporting burden</a></li>
+        <li><a href="https://thearc.org/blog/iep-rights-explained-what-every-parent-and-educator-should-know/">The Arc: IEP rights and parent preparation</a></li>
+        <li><a href="https://undivided.io/resources/undivideds-new-iep-assistant-common-parent-questions-3609">Undivided: IEP Assistant competitor example</a></li>
+        <li><a href="https://www.singlestop.org/screener-and-resources">Single Stop: Benefits access platform competitor example</a></li>
+        <li><a href="https://company.findhelp.com/blog/2025/10/23/benefit-enrollment/">Findhelp/Uno Health: Benefits enrollment platform competitor example</a></li>
+        <li><a href="https://www.counterforcehealth.org/">Counterforce Health: Insurance denial appeal competitor example</a></li>
+        <li><a href="https://www.fighthealthinsurance.com/">Fight Health Insurance: Free appeal generation competitor example</a></li>
+        <li><a href="https://www.instrumentl.com/">Instrumentl: Grant management competitor example</a></li>
+        <li><a href="https://caringvillage.com/blog/caregiver-tech/medication-reminder-apps/">Caring Village: Medication reminder app comparison</a></li>
+        <li><a href="https://silktide.com/toolbar/">Silktide: Accessibility checker example</a></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

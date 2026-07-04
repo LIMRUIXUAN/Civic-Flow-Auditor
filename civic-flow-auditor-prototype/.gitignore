@@ -1,0 +1,7 @@
+.audit-runs/
+.npm-cache/
+dist/
+node_modules/
+
+.env
+civic-flow-auditor-prototype\.env

@@ -1,0 +1,39 @@
+{
+  "name": "civic-flow-auditor-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:api": "node server/api.js",
+    "server": "node server/api.js",
+    "start": "node server/api.js",
+    "build": "vite build",
+    "render:build": "npx playwright install chromium && npm run build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test",
+    "smoke:audit": "node server/smoke-audit.js",
+    "mcp:start": "node server/mcp-server.js",
+    "mcp:inspect": "npx @modelcontextprotocol/inspector node server/mcp-server.js"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vitejs/plugin-react": "5.0.4",
+    "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.2.0",
+    "ipaddr.js": "^2.4.0",
+    "lighthouse": "^13.4.0",
+    "lucide-react": "^1.23.0",
+    "nanoid": "^5.1.16",
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.61.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "tesseract.js": "^7.0.0",
+    "vite": "6.4.2",
+    "zod": "^4.4.3"
+  }
+}

@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: civic-flow-auditor
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run render:build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 8787
+      - key: SERVE_STATIC_DIST
+        value: "1"
+      - key: AUDIT_STORAGE_DIR
+        value: .audit-runs
+      - key: MAX_CONCURRENT_AUDITS
+        value: "1"
+      - key: AI_PROVIDER
+        value: none
+      - key: ENABLE_LIGHTHOUSE
+        value: "0"
+      - key: ENABLE_OCR
+        value: "1"
