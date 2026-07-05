@@ -56,6 +56,8 @@ export const DocumentSnapshotSchema = z.object({
   ocrStatus: z.enum(["not-needed", "not-run", "complete", "unavailable", "failed"]).default("not-run"),
   ocrPages: z.number().default(0),
   matchedStage: z.string().default("pdf"),
+  matchedStageReason: z.string().optional(),
+  sourcePageUrl: z.string().optional(),
   error: z.string().optional(),
 });
 
@@ -82,6 +84,16 @@ export const FindingSchema = z.object({
   url: z.string().optional(),
   selector: z.string().optional(),
   rule: z.string().optional(),
+  guidelineRefs: z
+    .array(
+      z.object({
+        label: z.string(),
+        url: z.string().url(),
+      }),
+    )
+    .default([]),
+  humanReviewNote: z.string().optional(),
+  matchedStageReason: z.string().optional(),
   evidenceScore: z.number().min(0).max(100).default(0),
   sourceSnippet: z.string().optional(),
   screenshotPath: z.string().optional(),
@@ -141,8 +153,17 @@ export const ScannerMetadataSchema = z
         documentsAttempted: z.number().default(0),
       })
       .default({ status: "not-run", pagesLimit: 2, documentsAttempted: 0 }),
+    timing: z
+      .object({
+        startedAt: z.string().optional(),
+        finishedAt: z.string().optional(),
+        durationMs: z.number().optional(),
+        targetMs: z.number().default(180000),
+        withinTarget: z.boolean().optional(),
+      })
+      .default({ targetMs: 180000 }),
   })
-  .default({ lighthouse: { status: "not-run" }, ocr: { status: "not-run", pagesLimit: 2, documentsAttempted: 0 } });
+  .default({ lighthouse: { status: "not-run" }, ocr: { status: "not-run", pagesLimit: 2, documentsAttempted: 0 }, timing: { targetMs: 180000 } });
 
 export const AuditRunSchema = z.object({
   id: z.string(),
@@ -165,6 +186,8 @@ export const AuditRunSchema = z.object({
       htmlReportUrl: z.string().optional(),
       pdfReportPath: z.string().optional(),
       pdfReportUrl: z.string().optional(),
+      ticketReportPath: z.string().optional(),
+      ticketReportUrl: z.string().optional(),
       screenshots: z.array(z.string()).default([]),
     })
     .default({ screenshots: [] }),
@@ -194,7 +217,7 @@ export function createAuditRunBase({ id, url, depth = "standard" }) {
     findings: [],
     agentSteps: [],
     ai: { provider: "none", model: "deterministic", status: "deterministic", generatedFields: [] },
-    scanner: { lighthouse: { status: "not-run" }, ocr: { status: "not-run", pagesLimit: 2, documentsAttempted: 0 } },
+    scanner: { lighthouse: { status: "not-run" }, ocr: { status: "not-run", pagesLimit: 2, documentsAttempted: 0 }, timing: { targetMs: 180000 } },
     skippedActions: [],
     artifacts: { screenshots: [] },
     safetyNotes,

@@ -5,7 +5,8 @@ import * as z from "zod/v4";
 import { normalizeDepth } from "../shared/audit-utils.js";
 import { annotateScreenshot, crawlSite, generateReportArtifact, mapJourney, parseDocument, runCivicFlowAudit, scanAccessibility } from "./audit-engine.js";
 import { validateScanTarget } from "./security.js";
-import { loadAuditRun, saveAuditRun, listAuditIds } from "./store.js";
+import fs from "node:fs/promises";
+import { loadAuditRun, saveAuditRun, listAuditIds, ensureRunDir, getArtifactPath } from "./store.js";
 import { cropDocumentImage } from "./auto-crop.js";
 import { analyzeDocumentImage } from "./vision-provider.js";
 
@@ -85,11 +86,15 @@ export function createCivicFlowMcpServer() {
     },
     async (input) => {
       const result = await cropDocumentImage(input.image_path, { paddingPercent: input.padding_percent });
+      await ensureRunDir("doc-scan");
+      const filename = `crop-${Date.now()}-${nanoid(6)}.png`;
+      const destPath = getArtifactPath("doc-scan", filename);
+      await fs.writeFile(destPath, result.croppedBuffer);
       return asToolResult({
+        cropped_image_path: destPath,
         cropBounds: result.cropBounds,
         originalSize: result.originalSize,
         croppedSize: result.croppedSize,
-        croppedBase64Length: result.croppedBase64.length
       });
     }
   );
@@ -100,11 +105,18 @@ export function createCivicFlowMcpServer() {
       title: "Analyze document regions",
       description: "Identify structural visual regions on a cropped document image and extract layout accessibility issues.",
       inputSchema: {
-        image_base64: z.string().describe("Base64 data URI of the cropped document image."),
+        image_path: z.string().describe("Local filesystem path to document image or base64 data."),
       },
     },
     async (input) => {
-      const result = await analyzeDocumentImage(input.image_base64);
+      let base64Data = "";
+      if (input.image_path.startsWith("data:") || input.image_path.length > 500) {
+        base64Data = input.image_path;
+      } else {
+        const bytes = await fs.readFile(input.image_path);
+        base64Data = `data:image/png;base64,${bytes.toString("base64")}`;
+      }
+      const result = await analyzeDocumentImage(base64Data);
       return asToolResult(result);
     }
   );

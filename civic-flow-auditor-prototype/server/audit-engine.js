@@ -9,14 +9,17 @@ import {
   buildStagesFromPagesAndFindings,
   classifyJourney,
   createFinding,
+  createTimingMetadata,
   dedupeAndSortFindings,
   depthToMaxPages,
   guidelineFromTags,
   isImageOnlyPdfText,
   isSameDomainUrl,
   mapAxeImpactToSeverity,
+  matchDocumentToStage,
   normalizeDepth,
   summarizePdfText,
+  stage,
 } from "../shared/audit-utils.js";
 import { buildDeterministicExecutiveSummary } from "./ai-provider.js";
 import { config } from "./config.js";
@@ -148,9 +151,17 @@ async function fetchFallbackSnapshot(url, maxPages, { skippedActions = [], signa
         return { href, text };
       });
       const pdfs = links.filter((link) => /\.pdf($|[?#])/i.test(link.href)).map((link) => ({ url: link.href, text: link.text }));
-      documents.push(...pdfs.map((pdf) => ({ url: pdf.url, title: pdf.text || "Linked PDF", matchedStage: "pdf" })));
-
       const journey = classifyJourney({ url: current, title, heading, textSample });
+      documents.push(
+        ...pdfs.map((pdf) => ({
+          url: pdf.url,
+          title: pdf.text || "Linked PDF",
+          matchedStage: journey.id,
+          matchedStageReason: `Linked from ${journey.label} page during fallback discovery.`,
+          sourcePageUrl: current,
+        })),
+      );
+
       pages.push({
         url: current,
         title,
@@ -298,7 +309,13 @@ export async function crawlSite({ url, max_pages = config.maxPages, same_domain_
           scanned: false,
         });
 
-        const incomingDocs = snapshot.pdfs.map((pdf) => ({ url: pdf.href || pdf.url, title: pdf.text || "Linked PDF", matchedStage: "pdf" }));
+        const incomingDocs = snapshot.pdfs.map((pdf) => ({
+          url: pdf.href || pdf.url,
+          title: pdf.text || "Linked PDF",
+          matchedStage: journey.id,
+          matchedStageReason: `Linked from ${journey.label} page during discovery.`,
+          sourcePageUrl: currentUrl,
+        }));
         documents.splice(0, documents.length, ...mergeUniqueDocuments(documents, incomingDocs));
 
         for (const link of snapshot.links) {
@@ -565,7 +582,7 @@ export async function scanAccessibility({ page_url, viewport = defaultViewport, 
   }
 }
 
-export async function parseDocument({ pdf_url, auditId = "manual", signal }) {
+export async function parseDocument({ pdf_url, auditId = "manual", signal, sourcePageUrl, matchedStage = "pdf", matchedStageReason }) {
   const safeUrl = await validateScanTarget(pdf_url);
   const response = await fetch(safeUrl, { signal, redirect: "manual" });
   if (response.status >= 300 && response.status < 400) {
@@ -587,7 +604,7 @@ export async function parseDocument({ pdf_url, auditId = "manual", signal }) {
     const imageOnly = isImageOnlyPdfText(extractedText);
     const ocr = imageOnly ? await ocrPdfFirstPages(buffer, { pagesLimit: 2 }) : { status: "not-needed", text: "", pages: 0 };
     const combinedText = ocr.text ? `${extractedText}\n${ocr.text}`.trim() : extractedText;
-    return {
+    const parsedDocument = {
       url: safeUrl,
       title: path.basename(new URL(safeUrl).pathname) || "Linked PDF",
       extractedText: combinedText,
@@ -597,8 +614,11 @@ export async function parseDocument({ pdf_url, auditId = "manual", signal }) {
       ocrText: ocr.text || "",
       ocrStatus: ocr.status,
       ocrPages: ocr.pages || 0,
-      matchedStage: "pdf",
+      matchedStage,
+      matchedStageReason,
+      sourcePageUrl,
     };
+    return parsedDocument;
   } finally {
     await parser.destroy().catch(() => {});
     await ensureRunDir(auditId);
@@ -618,7 +638,7 @@ export async function mapJourney({ pages = [], documents = [] }) {
   };
 }
 
-export async function annotateScreenshot({ screenshotPath, issueBoxes = [], auditId = "manual" }) {
+export async function annotateScreenshot({ screenshotPath, issueBoxes = [], auditId = "manual", finding }) {
   if (!screenshotPath || !issueBoxes.length) {
     return { annotatedScreenshotPath: screenshotPath };
   }
@@ -634,16 +654,27 @@ export async function annotateScreenshot({ screenshotPath, issueBoxes = [], audi
       (box) => `<div class="box" style="left:${box.x}px;top:${box.y}px;width:${Math.max(box.width, 24)}px;height:${Math.max(box.height, 24)}px"><b>${box.label}</b></div>`,
     )
     .join("");
+  const callouts = issueBoxes
+    .map(
+      (box) => `<div class="callout"><b>${box.label}</b><strong>${finding?.severity || "Review"}</strong><span>${compactText(finding?.title || "Accessibility issue", 90)}</span></div>`,
+    )
+    .join("");
 
   try {
     await page.setContent(
       `<!doctype html><html><head><style>
-        body { margin: 0; background: white; }
+        body { margin: 0; background: white; font-family: Arial, sans-serif; color: #132238; }
+        .canvas { display: flex; align-items: flex-start; gap: 18px; padding: 0 18px 18px 0; }
         .wrap { position: relative; display: inline-block; }
         img { display: block; max-width: none; }
         .box { position: absolute; border: 5px solid #0f766e; outline: 3px solid #f59e0b; box-sizing: border-box; }
         .box b { position: absolute; left: -5px; top: -34px; background: #0f3557; color: white; border-radius: 999px; padding: 5px 10px; font: 700 16px Arial; }
-      </style></head><body><div class="wrap"><img src="${dataUrl}" alt="">${boxes}</div></body></html>`,
+        .callouts { width: 360px; display: grid; gap: 10px; padding-top: 12px; }
+        .callout { border: 3px solid #0f766e; border-left: 9px solid #f59e0b; border-radius: 10px; padding: 10px 12px; background: #f8fbff; box-shadow: 0 2px 8px rgba(15,31,50,.12); }
+        .callout b { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: #0f3557; color: white; margin-right: 8px; }
+        .callout strong { color: #8a3412; margin-right: 8px; }
+        .callout span { display: block; margin-top: 6px; font-size: 15px; line-height: 1.35; }
+      </style></head><body><div class="canvas"><div class="wrap"><img src="${dataUrl}" alt="">${boxes}</div><div class="callouts">${callouts}</div></div></body></html>`,
       { waitUntil: "load" },
     );
     await page.screenshot({ path: outputPath, fullPage: true });
@@ -660,6 +691,7 @@ export async function generateReportArtifact({ auditRun }) {
 export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate = async () => {}, signal }) {
   const normalizedDepth = normalizeDepth(depth);
   const safeUrl = await validateScanTarget(url);
+  const startedAt = nowIso();
 
   let run = {
     id,
@@ -674,7 +706,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
     findings: [],
     agentSteps: setAgentStep(emptyAgentSteps(), "Intake and Safety", "running", "Validating public URL and safety scope."),
     ai: { provider: "none", model: "deterministic", status: "deterministic", generatedFields: [] },
-    scanner: { lighthouse: { status: "not-run" }, ocr: { status: "not-run", pagesLimit: 2, documentsAttempted: 0 } },
+    scanner: { lighthouse: { status: "not-run" }, ocr: { status: "not-run", pagesLimit: 2, documentsAttempted: 0 }, timing: { startedAt, targetMs: 180000 } },
     skippedActions: [],
     artifacts: { screenshots: [] },
     safetyNotes,
@@ -761,7 +793,17 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
     for (const doc of run.documents.slice(0, 3)) {
       throwIfCancelled(signal);
       try {
-        const parsedDocument = await parseDocument({ pdf_url: doc.url, auditId: id, signal });
+        const parsedDocument = matchDocumentToStage(
+          await parseDocument({
+            pdf_url: doc.url,
+            auditId: id,
+            signal,
+            sourcePageUrl: doc.sourcePageUrl,
+            matchedStage: doc.matchedStage,
+            matchedStageReason: doc.matchedStageReason,
+          }),
+          run.pages,
+        );
         if (parsedDocument.ocrStatus === "complete" || parsedDocument.ocrStatus === "failed") ocrDocumentsAttempted += 1;
         parsedDocuments.push(parsedDocument);
       } catch (error) {
@@ -772,7 +814,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
           reason: error instanceof Error ? error.message : String(error),
           stage: "Document Review",
         });
-        parsedDocuments.push({
+        parsedDocuments.push(matchDocumentToStage({
           ...doc,
           extractedText: "",
           textLength: 0,
@@ -781,7 +823,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
           ocrStatus: "failed",
           ocrPages: 0,
           error: error instanceof Error ? error.message : String(error),
-        });
+        }, run.pages));
       }
     }
 
@@ -791,7 +833,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
         createFinding({
           index: index + 1,
           prefix: "PDF",
-          page: { url: doc.url, session: "pdf", sessionLabel: "Handbook / PDF" },
+          page: { url: doc.url, session: doc.matchedStage || "pdf", sessionLabel: stage(doc.matchedStage || "pdf").label },
           title: "PDF appears to be image-only or unreadable",
           impact: "Screen reader users may not be able to read deadlines, eligibility rules, or required document instructions.",
           guideline: "WCAG 2.1 1.1.1",
@@ -799,6 +841,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
           fix: "Replace the PDF with a tagged, text-selectable document that includes headings and accessible form structure.",
           selector: doc.url,
           sourceSnippet: doc.summary,
+          matchedStageReason: doc.matchedStageReason,
         }),
       );
 
@@ -824,7 +867,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
       throwIfCancelled(signal);
       if (finding.screenshotPath && finding.issueBoxes?.length) {
         try {
-          const annotated = await annotateScreenshot({ screenshotPath: finding.screenshotPath, issueBoxes: finding.issueBoxes, auditId: id });
+          const annotated = await annotateScreenshot({ screenshotPath: finding.screenshotPath, issueBoxes: finding.issueBoxes, auditId: id, finding });
           annotatedFindings.push({ ...finding, screenshotPath: annotated.annotatedScreenshotPath, screenshotUrl: annotated.annotatedScreenshotUrl || finding.screenshotUrl });
           continue;
         } catch {
@@ -859,9 +902,12 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
     });
     await update({ agentSteps: setAgentStep(run.agentSteps, "Report Export", "running", "Writing standalone HTML and PDF artifacts.") });
 
-    const reportArtifacts = await generateReport(run);
+    const finishedAt = nowIso();
+    const runWithTiming = { ...run, scanner: { ...run.scanner, timing: createTimingMetadata(startedAt, finishedAt) } };
+    const reportArtifacts = await generateReport(runWithTiming);
     await update({
-      artifacts: { ...run.artifacts, ...reportArtifacts },
+      artifacts: { ...runWithTiming.artifacts, ...reportArtifacts },
+      scanner: runWithTiming.scanner,
       status: "report-ready",
       progress: 100,
       agentSteps: setAgentStep(run.agentSteps, "Report Export", "complete", "Standalone HTML report ready."),
@@ -873,6 +919,7 @@ export async function runCivicFlowAudit({ id, url, depth = "standard", onUpdate 
     await update({
       status: cancelled ? "cancelled" : "failed",
       progress: Math.max(run.progress, 10),
+      scanner: { ...run.scanner, timing: createTimingMetadata(startedAt, nowIso()) },
       error: error instanceof Error ? error.message : String(error),
       agentSteps: run.agentSteps.map((step) => (step.status === "running" || (cancelled && step.status === "queued") ? { ...step, status: cancelled ? "cancelled" : "failed" } : step)),
     });

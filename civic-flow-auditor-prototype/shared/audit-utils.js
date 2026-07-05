@@ -34,6 +34,23 @@ export const severityOrder = {
   Low: 3,
 };
 
+export const scanTargetMs = 180000;
+
+export const ruleSources = {
+  adaWebRule: {
+    label: "ADA Title II web and mobile accessibility rule",
+    url: "https://www.ada.gov/resources/2024-03-08-web-rule/",
+  },
+  automatedLimit: {
+    label: "W3C preliminary accessibility review guidance",
+    url: "https://www.w3.org/WAI/test-evaluate/preliminary/",
+  },
+  wcag22: {
+    label: "W3C WCAG 2.2 Recommendation",
+    url: "https://www.w3.org/TR/WCAG22/",
+  },
+};
+
 export function normalizeDepth(depth) {
   return scanDepths.some((item) => item.id === depth) ? depth : "standard";
 }
@@ -179,6 +196,112 @@ export function guidelineFromTags(tags = []) {
   return `WCAG ${code}`;
 }
 
+export function guidelineRefsFor(guideline = "") {
+  const refs = [];
+  const match = String(guideline).match(/WCAG\s*(?:2\.\d\s*)?(\d+)\.(\d+)\.(\d+)/i);
+  if (match) {
+    refs.push({
+      label: `WCAG Success Criterion ${match[1]}.${match[2]}.${match[3]}`,
+      url: `https://www.w3.org/TR/WCAG22/#${match[1]}.${match[2]}.${match[3]}`,
+    });
+  } else if (/wcag/i.test(guideline)) {
+    refs.push(ruleSources.wcag22);
+  }
+  refs.push(ruleSources.adaWebRule);
+  return refs;
+}
+
+export function humanReviewNoteFor(guideline = "") {
+  if (/Safety review/i.test(guideline)) {
+    return "Human review is required before any public-service form is submitted or published.";
+  }
+  return "Automated checks and AI suggestions are assistance only; a qualified human accessibility review is still required.";
+}
+
+export function createTimingMetadata(startedAt, finishedAt = new Date().toISOString(), targetMs = scanTargetMs) {
+  const start = Date.parse(startedAt);
+  const end = Date.parse(finishedAt);
+  const durationMs = Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : undefined;
+  return {
+    startedAt,
+    finishedAt,
+    durationMs,
+    targetMs,
+    withinTarget: typeof durationMs === "number" ? durationMs <= targetMs : undefined,
+  };
+}
+
+export function inferStageFromText(text = "", fallbackStage = "pdf") {
+  const searchable = String(text).toLowerCase();
+  if (/\b(upload|attachment|attach|supporting document|proof of|photo id|identification)\b/.test(searchable)) return stage("upload");
+  if (/\b(review|submit|submission|sign|signature|certify|declaration)\b/.test(searchable)) return stage("review");
+  if (/\b(register|registration|create account|enroll|application form)\b/.test(searchable)) return stage("register");
+  if (/\b(verify|verification|identity|authentication|code)\b/.test(searchable)) return stage("verify");
+  if (/\b(confirm|confirmation|receipt|approved|complete)\b/.test(searchable)) return stage("confirm");
+  if (/\b(address|phone|birth|income|household|personal information)\b/.test(searchable)) return stage("personal");
+  if (/\b(notification|email|sms|contact preference|alert)\b/.test(searchable)) return stage("notify");
+  return stage(fallbackStage);
+}
+
+export function matchDocumentToStage(document = {}, pages = []) {
+  const sourcePage = pages.find((page) => document.sourcePageUrl && page.url === document.sourcePageUrl);
+  const sourceStage = sourcePage?.session || "";
+  const textStage = inferStageFromText([document.title, document.url, document.summary, document.extractedText].filter(Boolean).join(" "), sourceStage || "pdf");
+  const matched = textStage.id !== "pdf" ? textStage : stage(sourceStage || document.matchedStage || "pdf");
+  return {
+    ...document,
+    matchedStage: matched.id,
+    matchedStageReason:
+      matched.id === sourceStage
+        ? `Matched to the source page stage: ${sourcePage?.sessionLabel || matched.label}.`
+        : `Matched from document title, URL, or extracted instruction text: ${matched.label}.`,
+  };
+}
+
+export function documentRegionFindingDefaults(region = {}) {
+  const type = String(region.type || "Body Text");
+  const text = String(region.text || "").trim();
+  const notes = region.accessibility_notes || "This scanned document region needs manual accessibility review.";
+  if (/Form Input|Signature/i.test(type)) {
+    return {
+      severity: "Critical",
+      guideline: "WCAG 2.2 1.3.1",
+      title: `${type} needs accessible labels and instructions`,
+      impact: notes,
+      fix: text
+        ? `Convert this ${type.toLowerCase()} region into a tagged digital form control with a visible label, programmatic name, instructions, and extracted text preserved: "${text}".`
+        : `Convert this ${type.toLowerCase()} region into a tagged digital form control with a visible label, programmatic name, and instructions.`,
+    };
+  }
+  if (/Table/i.test(type)) {
+    return {
+      severity: "High",
+      guideline: "WCAG 2.2 1.3.1",
+      title: "Table structure needs tagged headers and reading order",
+      impact: notes,
+      fix: "Publish a digital table with header cells, row/column associations, and logical reading order.",
+    };
+  }
+  if (/Header/i.test(type)) {
+    return {
+      severity: "Medium",
+      guideline: "WCAG 2.2 2.4.6",
+      title: "Document heading needs clear semantic structure",
+      impact: notes,
+      fix: "Use tagged headings that describe the form or notice section and preserve the visual hierarchy.",
+    };
+  }
+  return {
+    severity: "High",
+    guideline: "WCAG 2.2 1.1.1",
+    title: `${type} needs a digital text alternative`,
+    impact: notes,
+    fix: text
+      ? `Provide selectable, tagged digital text for this region and preserve the reading order: "${text}".`
+      : "Provide selectable, tagged digital text for this region and preserve the reading order.",
+  };
+}
+
 export function summarizePdfText(text = "") {
   const compact = text.replace(/\s+/g, " ").trim();
   if (!compact) return "No extractable text was found.";
@@ -200,7 +323,25 @@ export function buildTicket({ title, description, guideline, severity, component
   ].join("\n");
 }
 
-export function createFinding({ index, prefix = "AUD", page = {}, stageId, stageLabel, title, impact, guideline, severity, fix, selector, sourceSnippet, issueBoxes = [], rule }) {
+export function createFinding({
+  index,
+  prefix = "AUD",
+  page = {},
+  stageId,
+  stageLabel,
+  title,
+  impact,
+  guideline,
+  severity,
+  fix,
+  selector,
+  sourceSnippet,
+  issueBoxes = [],
+  rule,
+  guidelineRefs,
+  humanReviewNote,
+  matchedStageReason,
+}) {
   const id = `${prefix}-${String(index).padStart(3, "0")}`;
   const component = stageLabel || page.sessionLabel || "Public website";
   const description = `${title}${page.url ? ` on ${page.url}` : ""}. ${impact}`;
@@ -219,6 +360,9 @@ export function createFinding({ index, prefix = "AUD", page = {}, stageId, stage
     url: page.url,
     selector,
     rule: rule || `${prefix}:${guideline}:${title}`,
+    guidelineRefs: guidelineRefs || guidelineRefsFor(guideline),
+    humanReviewNote: humanReviewNote || humanReviewNoteFor(guideline),
+    matchedStageReason,
     sourceSnippet,
     screenshotPath: page.screenshotPath,
     screenshotUrl: page.screenshotUrl,
@@ -232,8 +376,9 @@ export function buildStagesFromPagesAndFindings(pages = [], documents = [], find
   for (const page of pages) {
     pageCounts.set(page.session || "general", (pageCounts.get(page.session || "general") || 0) + 1);
   }
-  if (documents.length) {
-    pageCounts.set("pdf", documents.length);
+  for (const document of documents) {
+    const stageId = document.matchedStage || "pdf";
+    pageCounts.set(stageId, (pageCounts.get(stageId) || 0) + 1);
   }
 
   const counts = new Map();

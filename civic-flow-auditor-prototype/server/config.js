@@ -1,8 +1,11 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 export const projectRoot = path.resolve(serverDir, "..");
+
+dotenv.config({ path: path.join(projectRoot, ".env"), quiet: true });
 
 export const config = {
   host: process.env.HOST || "127.0.0.1",

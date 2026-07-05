@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyJourney, dedupeAndSortFindings, isImageOnlyPdfText, mapAxeImpactToSeverity, validatePublicUrl } from "../shared/audit-utils.js";
+import {
+  buildStagesFromPagesAndFindings,
+  classifyJourney,
+  createTimingMetadata,
+  dedupeAndSortFindings,
+  documentRegionFindingDefaults,
+  guidelineRefsFor,
+  isImageOnlyPdfText,
+  matchDocumentToStage,
+  mapAxeImpactToSeverity,
+  validatePublicUrl,
+} from "../shared/audit-utils.js";
 
 test("validatePublicUrl accepts public https URLs", () => {
   const result = validatePublicUrl("https://example.com/services/register");
@@ -90,4 +101,61 @@ test("dedupeAndSortFindings deduplicates by URL selector and rule, then sorts by
   assert.equal(findings[0].id, "CRIT-1");
   assert.equal(findings[0].severity, "Critical");
   assert.equal(findings[0].evidenceScore > findings[1].evidenceScore, true);
+});
+
+test("buildStagesFromPagesAndFindings counts scanned documents in the Document Scan stage", () => {
+  const stages = buildStagesFromPagesAndFindings(
+    [],
+    [{ url: "/artifacts/doc-scan/crop.png", title: "Notice", matchedStage: "document-scan" }],
+    [
+      {
+        id: "DOC-1",
+        stage: "document-scan",
+        stageLabel: "Document Scan",
+        title: "Body text critique",
+        impact: "Impact",
+        guideline: "WCAG 2.1 1.1.1",
+        severity: "High",
+        status: "To do",
+        fix: "Fix",
+        ticket: "Ticket",
+      },
+    ],
+  );
+
+  assert.deepEqual(stages.map((stage) => stage.id), ["document-scan"]);
+  assert.equal(stages[0].pages, 1);
+  assert.equal(stages[0].serious, 1);
+});
+
+test("guidelineRefsFor returns source links without requiring model output", () => {
+  const refs = guidelineRefsFor("WCAG 2.2 1.3.1");
+  assert.equal(refs.some((ref) => ref.url.includes("WCAG22/#1.3.1")), true);
+  assert.equal(refs.some((ref) => ref.url.includes("ada.gov")), true);
+});
+
+test("matchDocumentToStage maps upload instructions to document upload", () => {
+  const mapped = matchDocumentToStage(
+    {
+      url: "https://example.gov/forms/proof.pdf",
+      title: "Required upload proof",
+      extractedText: "Attach a photo ID and upload supporting documents before review.",
+      matchedStage: "pdf",
+    },
+    [],
+  );
+  assert.equal(mapped.matchedStage, "upload");
+  assert.match(mapped.matchedStageReason, /Matched/);
+});
+
+test("documentRegionFindingDefaults maps form inputs to label guidance", () => {
+  const defaults = documentRegionFindingDefaults({ type: "Form Input", text: "Applicant name" });
+  assert.equal(defaults.severity, "Critical");
+  assert.match(defaults.guideline, /1\.3\.1/);
+});
+
+test("createTimingMetadata records 3-minute target status", () => {
+  const timing = createTimingMetadata("2026-01-01T00:00:00.000Z", "2026-01-01T00:02:00.000Z");
+  assert.equal(timing.durationMs, 120000);
+  assert.equal(timing.withinTarget, true);
 });

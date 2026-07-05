@@ -1,4 +1,5 @@
 import { createAuditRunBase, nowIso } from "./audit-contract.js";
+import { guidelineRefsFor, humanReviewNoteFor } from "./audit-utils.js";
 
 export const toolDefinitions = [
   {
@@ -61,6 +62,7 @@ export const defaultStages = [
   { id: "review", name: "Review and submit", pages: 1, critical: 1, serious: 0, minor: 0 },
   { id: "confirm", name: "Confirmation", pages: 1, critical: 1, serious: 0, minor: 0 },
   { id: "pdf", name: "Linked Documents", pages: 3, critical: 1, serious: 1, minor: 0 },
+  { id: "document-scan", name: "Document Scan", pages: 1, critical: 1, serious: 1, minor: 0 },
 ];
 
 export const defaultIssues = [
@@ -116,6 +118,21 @@ export const defaultIssues = [
     ticket:
       "Title: Preserve focus after Register Next action\nDescription: Keyboard focus is not moved to a meaningful element after navigation.\nAcceptance criteria: Focus lands on the next step heading and remains visible.\nWCAG: 2.1 2.4.3\nPriority: High\nComponent: Registration flow",
   },
+  {
+    id: "DOC-DEMO-001",
+    stage: "document-scan",
+    stageLabel: "Document Scan",
+    title: "Printed signature field needs accessible digital alternative",
+    impact: "Screen reader users may not know that a signature is required on the scanned notice.",
+    guideline: "WCAG 2.2 1.3.1",
+    guidelineRefs: guidelineRefsFor("WCAG 2.2 1.3.1"),
+    humanReviewNote: humanReviewNoteFor("WCAG 2.2 1.3.1"),
+    severity: "Critical",
+    status: "To do",
+    fix: "Provide a tagged digital signature field with a visible label, programmatic name, and instructions.",
+    ticket:
+      "Title: Add accessible digital signature field\nDescription: The scanned form shows a visual signature line without a programmatic field or instructions.\nAcceptance criteria: Screen reader announces the signature field name and required instructions.\nWCAG: 2.2 1.3.1\nPriority: High\nComponent: Document Scan",
+  },
 ];
 
 export function createDemoAuditRun(overrides = {}) {
@@ -137,6 +154,7 @@ export function createDemoAuditRun(overrides = {}) {
     ],
     documents: overrides.documents || [
       { url: "https://city.example.gov/forms/license-guide.pdf", title: "Business license guide", textLength: 0, imageOnly: true, summary: "Image-only guide needs replacement.", matchedStage: "pdf" },
+      { url: "/artifacts/demo/scanned-notice.png", title: "Scanned renewal notice", textLength: 180, imageOnly: true, summary: "Printed notice includes a signature line and dense instructions.", matchedStage: "document-scan", matchedStageReason: "Demo scanned document is shown in Document Scan mode." },
     ],
     stages: overrides.stages || defaultStages,
     findings: overrides.findings || defaultIssues,

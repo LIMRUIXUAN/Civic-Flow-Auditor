@@ -19,13 +19,14 @@ import {
   Play,
   Route,
   ShieldCheck,
+  Trash2,
   TriangleAlert,
   Volume2,
   Workflow,
 } from "lucide-react";
 import { scanDepths } from "../shared/audit-contract.js";
 import { createDemoAuditRun, toolDefinitions } from "../shared/demo-data.js";
-import { buildStagesFromPagesAndFindings } from "../shared/audit-utils.js";
+import { buildStagesFromPagesAndFindings, guidelineRefsFor, humanReviewNoteFor } from "../shared/audit-utils.js";
 
 const demoAuditRun = createDemoAuditRun();
 const demoQueryEnabled = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1";
@@ -243,6 +244,7 @@ function App() {
   const [selectedScanImageId, setSelectedScanImageId] = useState(null);
   const [isScanningImage, setIsScanningImage] = useState(false);
   const [refiningRegionId, setRefiningRegionId] = useState(null);
+  const documentScanRef = useRef({ documents: [], findings: [] });
 
   const isRunning = auditRun.status === "queued" || auditRun.status === "validating" || auditRun.status === "scanning";
   const stages = auditRun.stages;
@@ -261,8 +263,39 @@ function App() {
   }, [findings, selectedStage]);
 
   const selectedIssue = findings.find((issue) => issue.id === selectedIssueId) || visibleIssues[0] || null;
+  const selectedGuidelineRefs = selectedIssue ? (selectedIssue.guidelineRefs?.length ? selectedIssue.guidelineRefs : guidelineRefsFor(selectedIssue.guideline)) : [];
+  const selectedHumanReviewNote = selectedIssue ? selectedIssue.humanReviewNote || humanReviewNoteFor(selectedIssue.guideline) : "";
   const selectedIssueIndex = visibleIssues.findIndex((issue) => issue.id === selectedIssue?.id);
   const canNavigateIssues = visibleIssues.length > 1 && selectedIssueIndex >= 0;
+
+  async function persistDocumentAuditRun(nextRun) {
+    const response = await fetch("/api/audits/document-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auditRun: nextRun }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Document report could not be saved.");
+    setAuditRun(payload);
+    setBackendMode("live");
+    await refreshHistory();
+    return payload;
+  }
+
+  function mergeDocumentScanOutput(run) {
+    const { documents, findings } = documentScanRef.current;
+    if (!documents.length && !findings.length) return run;
+    const seenDocuments = new Set((run.documents || []).map((document) => document.url));
+    const seenFindings = new Set((run.findings || []).map((finding) => finding.id));
+    const mergedDocuments = [...(run.documents || []), ...documents.filter((document) => !seenDocuments.has(document.url))];
+    const mergedFindings = [...(run.findings || []), ...findings.filter((finding) => !seenFindings.has(finding.id))];
+    return {
+      ...run,
+      documents: mergedDocuments,
+      findings: mergedFindings,
+      stages: buildStagesFromPagesAndFindings(run.pages || [], mergedDocuments, mergedFindings),
+    };
+  }
 
   useEffect(() => {
     return () => {
@@ -322,7 +355,7 @@ function App() {
         const response = await fetch("/api/scan-image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: active.originalBase64 }),
+          body: JSON.stringify({ image: active.originalBase64, filename: active.name }),
         });
 
         if (!response.ok) {
@@ -331,33 +364,19 @@ function App() {
         }
 
         const data = await response.json();
-        const imageId = active.id;
-        
-        // Generate findings
-        const newFindings = data.regions.map((region, idx) => {
-          const findingId = `DOC-${imageId.split("-")[2].slice(0, 4)}-${idx + 1}`;
-          const isInput = region.type === "Form Input" || region.type === "Signature";
-          return {
-            id: findingId,
-            stage: "document-scan",
-            stageLabel: "Document Scan",
-            title: `${region.type} accessibility critique`,
-            severity: isInput ? "Critical" : region.type === "Header" ? "Medium" : "High",
-            guideline: "WCAG 2.1 1.1.1",
-            status: "To do",
-            fix: region.text ? `Extracted Text: "${region.text}". Fix: Check label associations and reading order.` : "Ensure visual labels exist and reading flow matches logical order.",
-            ticket: `Title: Fix visual accessibility in ${region.type} region\nDescription: ${region.accessibility_notes}\nWCAG: WCAG 2.1 1.1.1\nComponent: Document Scan`,
-            url: data.croppedImageUrl,
-            screenshotUrl: data.croppedImageUrl,
-            issueBoxes: [{
-              x: region.x,
-              y: region.y,
-              width: region.width,
-              height: region.height,
-              label: String(idx + 1)
-            }]
-          };
-        });
+        const newFindings = data.findings || [];
+        const nextDocumentFromServer = data.document || {
+          url: data.croppedImageUrl,
+          title: active.name,
+          extractedText: data.fullText,
+          textLength: data.fullText?.length || 0,
+          imageOnly: true,
+          summary: data.suggestions?.[0] || "Scanned document form layout.",
+          ocrStatus: "complete",
+          ocrPages: 1,
+          matchedStage: "document-scan",
+          matchedStageReason: "Uploaded image was analyzed in Document Scan mode."
+        };
 
         setScannedImages((prev) =>
           prev.map((item) =>
@@ -375,31 +394,34 @@ function App() {
           )
         );
 
-        setAuditRun((prev) => {
-          const nextFindings = [...prev.findings, ...newFindings];
-          const nextDocuments = [
-            ...prev.documents,
-            {
-              url: data.croppedImageUrl,
-              title: active.name,
-              imageOnly: true,
-              summary: data.suggestions[0] || "Scanned document form layout.",
-              matchedStage: "document-scan"
-            }
-          ];
-          const nextStages = buildStagesFromPagesAndFindings(prev.pages, nextDocuments, nextFindings);
-
-          return {
-            ...prev,
-            status: prev.status === "idle" || prev.status === "empty-audit" ? "report-ready" : prev.status,
-            progress: prev.status === "idle" || prev.status === "empty-audit" ? 100 : prev.progress,
-            documents: nextDocuments,
-            findings: nextFindings,
-            stages: nextStages
-          };
+        const runToPersist = await new Promise((resolve) => {
+          setAuditRun((prev) => {
+            const nextFindings = [...prev.findings, ...newFindings];
+            const nextDocuments = [...prev.documents, nextDocumentFromServer];
+            const nextStages = buildStagesFromPagesAndFindings(prev.pages, nextDocuments, nextFindings);
+            const nextRun = {
+              ...prev,
+              status: prev.status === "idle" ? "report-ready" : prev.status,
+              progress: prev.status === "idle" ? 100 : prev.progress,
+              documents: nextDocuments,
+              findings: nextFindings,
+              stages: nextStages,
+              scanner: {
+                ...(prev.scanner || {}),
+                timing: data.timing || prev.scanner?.timing || { targetMs: 180000 }
+              }
+            };
+            resolve(nextRun);
+            return nextRun;
+          });
         });
 
-        setNotice(`Successfully scanned ${active.name}`);
+        documentScanRef.current = {
+          documents: [...documentScanRef.current.documents, runToPersist.documents.at(-1)],
+          findings: [...documentScanRef.current.findings, ...newFindings],
+        };
+        const savedRun = await persistDocumentAuditRun(runToPersist);
+        setNotice(`Successfully scanned ${active.name}; unified report ${savedRun.artifacts?.pdfReportUrl ? "and PDF are" : "is"} ready.`);
       } catch (error) {
         console.error("Scanning queue error:", error);
         setScannedImages((prev) =>
@@ -542,12 +564,18 @@ function App() {
     eventSourceRef.current = source;
 
     source.addEventListener("audit", (event) => {
-      const nextRun = JSON.parse(event.data);
+      const nextRun = mergeDocumentScanOutput(JSON.parse(event.data));
       setAuditRun(nextRun);
       setBackendMode("live");
       if (nextRun.status === "report-ready") {
-        setNotice("Audit report is ready for review and export.");
         source.close();
+        if (documentScanRef.current.findings.length) {
+          persistDocumentAuditRun(nextRun)
+            .then(() => setNotice("Unified website and document report is ready for review and export."))
+            .catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
+        } else {
+          setNotice("Audit report is ready for review and export.");
+        }
       }
       if (nextRun.status === "failed") {
         setBackendMode("failed");
@@ -708,7 +736,7 @@ function App() {
   }
 
   function exportReport(type) {
-    const artifactUrl = type === "PDF" ? auditRun.artifacts?.pdfReportUrl : auditRun.artifacts?.htmlReportUrl;
+    const artifactUrl = type === "PDF" ? auditRun.artifacts?.pdfReportUrl : type === "Tickets" ? auditRun.artifacts?.ticketReportUrl : auditRun.artifacts?.htmlReportUrl;
     if (auditRun.status === "report-ready" && !reviewConfirmed) {
       setNotice("Confirm the final review checklist before exporting this assistance report.");
       return;
@@ -723,6 +751,23 @@ function App() {
       return;
     }
     setNotice(`${type} export is available after a live audit reaches Report ready.`);
+  }
+
+  async function purgeArtifacts() {
+    if (!auditRun.id || auditRun.id === "empty-audit" || auditRun.id === "pending") {
+      setNotice("No saved audit artifacts are available to purge.");
+      return;
+    }
+    try {
+      const response = await fetch(`/api/audits/${auditRun.id}/purge-artifacts`, { method: "POST" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Artifact purge failed.");
+      setAuditRun(payload.auditRun);
+      setNotice(`Purged ${payload.removed} local artifact${payload.removed === 1 ? "" : "s"} from this audit.`);
+      await refreshHistory();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
   }
 
   const modeLabel = isDemoAudit ? "Demo audit" : backendMode === "offline" ? "Backend offline" : backendMode === "failed" ? "Scan failed" : backendMode === "empty" ? "Empty audit" : "Live audit";
@@ -877,6 +922,11 @@ function App() {
                 />
               </div>
 
+              <div className="safety-line">
+                <ShieldCheck size={18} />
+                <span>Uploaded scan evidence is stored locally for report export until you purge the audit artifacts.</span>
+              </div>
+
               {scanQueue.length > 0 && (
                 <div className="queue-status">
                   <span className="live-dot" />
@@ -1006,7 +1056,7 @@ function App() {
         <div>
           <FileText size={24} />
           <strong>{auditRun.documents.length}</strong>
-          <span>PDFs found</span>
+          <span>Documents found</span>
         </div>
         <div>
           <GitBranch size={24} />
@@ -1166,6 +1216,25 @@ function App() {
                       <dd>{selectedIssue.guideline}</dd>
                     </div>
                   </dl>
+                  {selectedGuidelineRefs.length ? (
+                    <section>
+                      <h4>Rule sources</h4>
+                      <p>
+                        {selectedGuidelineRefs.map((ref, index) => (
+                          <span key={ref.url}>
+                            <a href={ref.url} target="_blank" rel="noreferrer">{ref.label}</a>
+                            {index < selectedGuidelineRefs.length - 1 ? " | " : ""}
+                          </span>
+                        ))}
+                      </p>
+                    </section>
+                  ) : null}
+                  {selectedIssue.matchedStageReason ? (
+                    <section>
+                      <h4>Stage mapping</h4>
+                      <p>{selectedIssue.matchedStageReason}</p>
+                    </section>
+                  ) : null}
                   <section>
                     <h4>Resident impact</h4>
                     <p>{selectedIssue.impact}</p>
@@ -1174,6 +1243,12 @@ function App() {
                     <h4>Recommended fix, plain language</h4>
                     <p>{selectedIssue.fix}</p>
                   </section>
+                  {selectedHumanReviewNote ? (
+                    <section>
+                      <h4>Human review note</h4>
+                      <p>{selectedHumanReviewNote}</p>
+                    </section>
+                  ) : null}
                   <section className="ticket-box">
                     <h4>Developer ticket draft</h4>
                     <pre>{selectedIssue.ticket}</pre>
@@ -1237,6 +1312,14 @@ function App() {
           <button className="secondary-button" type="button" onClick={() => exportReport("PDF")}>
             <Download size={18} />
             Export PDF
+          </button>
+          <button className="secondary-button" type="button" onClick={() => exportReport("Tickets")}>
+            <FileText size={18} />
+            Export tickets
+          </button>
+          <button className="secondary-button" type="button" onClick={purgeArtifacts} disabled={!auditRun.id || auditRun.id === "empty-audit" || auditRun.id === "pending"}>
+            <Trash2 size={18} />
+            Purge artifacts
           </button>
         </div>
       </section>

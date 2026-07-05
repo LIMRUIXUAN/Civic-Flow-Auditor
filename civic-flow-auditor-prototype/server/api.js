@@ -6,8 +6,9 @@ import express from "express";
 import helmet from "helmet";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { normalizeDepth } from "../shared/audit-utils.js";
-import { enhanceAuditRunWithAi } from "./ai-provider.js";
+import { buildStagesFromPagesAndFindings, createTimingMetadata, normalizeDepth } from "../shared/audit-utils.js";
+import { createAuditRunBase, nowIso, parseAuditRun } from "../shared/audit-contract.js";
+import { buildDeterministicExecutiveSummary, enhanceAuditRunWithAi } from "./ai-provider.js";
 import { cancelAudit, enqueueAudit, getQueueSnapshot } from "./audit-queue.js";
 import { config, projectRoot } from "./config.js";
 import { generateReport } from "./report.js";
@@ -25,6 +26,7 @@ import {
   artifactUrl,
 } from "./store.js";
 import { cropDocumentImage, cropSubRegion } from "./auto-crop.js";
+import { buildDocumentScanFindings } from "./document-findings.js";
 import { analyzeDocumentImage, refineRegion } from "./vision-provider.js";
 import { createWorker } from "tesseract.js";
 
@@ -32,6 +34,117 @@ const CreateAuditSchema = z.object({
   url: z.string(),
   depth: z.string().optional(),
 });
+
+const SaveDocumentAuditSchema = z.object({
+  auditRun: z.any(),
+});
+
+const allowedStoredArtifactExtensions = new Set([".html", ".pdf", ".md", ".png", ".jpg", ".jpeg"]);
+
+function shouldReplaceDocumentAuditId(id) {
+  return !id || id === "empty-audit" || id === "pending";
+}
+
+function sanitizeStoredEvidencePath(filePath) {
+  if (!filePath) return undefined;
+  const resolved = path.resolve(String(filePath));
+  const storageRoot = path.resolve(config.storageDir);
+  if (!resolved.startsWith(`${storageRoot}${path.sep}`)) return undefined;
+  return allowedStoredArtifactExtensions.has(path.extname(resolved).toLowerCase()) ? resolved : undefined;
+}
+
+async function removeStoredFile(filePath) {
+  const safePath = sanitizeStoredEvidencePath(filePath);
+  if (!safePath) return false;
+  await fs.rm(safePath, { force: true }).catch(() => {});
+  return true;
+}
+
+function sanitizeArtifactUrl(url) {
+  return typeof url === "string" && url.startsWith("/artifacts/") ? url : undefined;
+}
+
+function artifactPathFromUrl(url) {
+  if (typeof url !== "string" || !url.startsWith("/artifacts/")) return undefined;
+  const parts = url.split("/");
+  if (parts.length !== 4) return undefined;
+  try {
+    return getArtifactPath(decodeURIComponent(parts[2]), decodeURIComponent(parts[3]));
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeDocumentAuditRun(input) {
+  const id = shouldReplaceDocumentAuditId(input?.id) ? `doc-${nanoid(8)}` : String(input.id);
+  const timestamp = nowIso();
+  const runUrl = input?.pages?.length && input?.url ? input.url : "document-scan://local";
+  const base = createAuditRunBase({
+    id,
+    url: runUrl,
+    depth: normalizeDepth(input?.depth),
+  });
+  const documents = (input?.documents || []).map((document) => ({
+    ...document,
+    title: document.title || "Scanned document",
+    extractedText: document.extractedText || document.fullText || "",
+    textLength: Number(document.textLength || document.extractedText?.length || document.fullText?.length || 0),
+    imageOnly: document.imageOnly ?? true,
+    matchedStage: document.matchedStage || "document-scan",
+    ocrStatus: document.ocrStatus || "complete",
+  }));
+  const findings = (input?.findings || []).map((finding) => {
+    const screenshotPath = sanitizeStoredEvidencePath(finding.screenshotPath);
+    return {
+      ...finding,
+      stage: finding.stage || "document-scan",
+      stageLabel: finding.stageLabel || "Document Scan",
+      status: finding.status || "To do",
+      screenshotPath,
+      screenshotUrl: screenshotPath ? sanitizeArtifactUrl(finding.screenshotUrl) : undefined,
+    };
+  });
+  const stages = buildStagesFromPagesAndFindings(input?.pages || [], documents, findings);
+  const artifacts = {
+    ...(input?.artifacts || {}),
+    screenshots: [...new Set(findings.map((finding) => finding.screenshotPath).filter(Boolean))],
+  };
+  const run = {
+    ...base,
+    ...input,
+    id,
+    url: runUrl,
+    status: "report-ready",
+    progress: 100,
+    documents,
+    findings,
+    stages,
+    artifacts,
+    safetyNotes: [
+      ...new Set([
+        ...(input?.safetyNotes || base.safetyNotes),
+        "Uploaded scan images and generated evidence are stored locally for report export until the audit artifacts are purged.",
+      ]),
+    ],
+    scanner: {
+      ...(base.scanner || {}),
+      ...(input?.scanner || {}),
+      ocr: {
+        status: documents.length ? "complete" : "not-run",
+        pagesLimit: 2,
+        documentsAttempted: documents.length,
+        ...(input?.scanner?.ocr || {}),
+      },
+      timing:
+        input?.scanner?.timing?.startedAt && input?.scanner?.timing?.finishedAt
+          ? input.scanner.timing
+          : createTimingMetadata(input?.createdAt || timestamp, timestamp),
+    },
+    updatedAt: timestamp,
+  };
+  run.executiveSummary = input?.executiveSummary || buildDeterministicExecutiveSummary(run);
+  return parseAuditRun(run);
+}
 
 function corsOrigin(origin, callback) {
   const allowed = new Set([config.corsOrigin, "http://localhost:5173", "http://127.0.0.1:5173"]);
@@ -61,18 +174,20 @@ export function createApiApp() {
       maxPages: config.maxPages,
       queue: getQueueSnapshot(),
       aiProvider: config.aiProvider,
+      openRouterConfigured: Boolean(config.openRouterApiKey),
       lighthouse: config.enableLighthouse ? "enabled" : "optional",
       ocr: config.enableOcr ? "enabled" : "disabled",
     });
   });
 
   app.post("/api/scan-image", async (request, response) => {
-    const { image } = request.body;
+    const { image, filename } = request.body;
     if (!image) {
       response.status(400).json({ error: "Image data (base64) is required." });
       return;
     }
 
+    const scanStartedAt = nowIso();
     try {
       // 1. Crop using auto-crop (calls NVIDIA vision crop detection)
       const cropResult = await cropDocumentImage(image);
@@ -127,13 +242,39 @@ export function createApiApp() {
         };
       }
 
+      const document = {
+        url: croppedImageUrl,
+        title: filename || "Scanned document",
+        extractedText: result.full_text || "",
+        textLength: (result.full_text || "").length,
+        imageOnly: true,
+        summary: (result.suggestions || [])[0] || "Scanned document form layout.",
+        ocrText: result.full_text || "",
+        ocrStatus: "complete",
+        ocrPages: 1,
+        matchedStage: "document-scan",
+        matchedStageReason: "Uploaded image was analyzed in Document Scan mode.",
+      };
+      const { findings, aiReasoning } = await buildDocumentScanFindings({
+        regions: result.regions || [],
+        croppedImageUrl,
+        croppedImagePath: destPath,
+        filename: document.title,
+      });
+      const scanFinishedAt = nowIso();
+
       response.json({
         croppedImageUrl,
+        croppedImagePath: destPath,
         croppedBase64,
+        document,
+        findings,
         regions: result.regions || [],
         fullText: result.full_text || "",
         suggestions: result.suggestions || [],
-        method
+        method,
+        aiReasoning,
+        timing: createTimingMetadata(scanStartedAt, scanFinishedAt),
       });
     } catch (error) {
       console.error("Scan image error:", error);
@@ -214,6 +355,26 @@ export function createApiApp() {
     response.status(202).json(run);
   });
 
+  app.post("/api/audits/document-report", async (request, response) => {
+    const parsed = SaveDocumentAuditSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "Document audit payload is required." });
+      return;
+    }
+
+    try {
+      const run = normalizeDocumentAuditRun(parsed.data.auditRun);
+      const reportArtifacts = await generateReport(run);
+      const saved = await saveAuditRun({
+        ...run,
+        artifacts: { ...run.artifacts, ...reportArtifacts },
+      });
+      response.json(saved);
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.get("/api/audits/:id", async (request, response) => {
     try {
       response.json(await loadAuditRun(request.params.id));
@@ -230,6 +391,47 @@ export function createApiApp() {
     }
   });
 
+  app.post("/api/audits/:id/purge-artifacts", async (request, response) => {
+    try {
+      const run = await loadAuditRun(request.params.id);
+      const paths = [
+        run.artifacts?.htmlReportPath,
+        run.artifacts?.pdfReportPath,
+        run.artifacts?.ticketReportPath,
+        ...(run.artifacts?.screenshots || []),
+        ...run.findings.map((finding) => finding.screenshotPath).filter(Boolean),
+        ...run.documents.map((document) => artifactPathFromUrl(document.url)).filter(Boolean),
+      ];
+      let removed = 0;
+      for (const filePath of [...new Set(paths)]) {
+        if (await removeStoredFile(filePath)) removed += 1;
+      }
+
+      const sanitized = await saveAuditRun({
+        ...run,
+        findings: run.findings.map((finding) => ({
+          ...finding,
+          screenshotPath: undefined,
+          screenshotUrl: undefined,
+        })),
+        documents: run.documents.map((document) => ({
+          ...document,
+          url: sanitizeArtifactUrl(document.url) ? "purged-local-scan-artifact" : document.url,
+        })),
+        artifacts: { screenshots: [] },
+        safetyNotes: [
+          ...new Set([
+            ...run.safetyNotes,
+            "Local scan evidence artifacts were purged from this audit run.",
+          ]),
+        ],
+      });
+      response.json({ removed, auditRun: sanitized });
+    } catch (error) {
+      response.status(404).json({ error: error instanceof Error ? error.message : "Audit run not found." });
+    }
+  });
+
   app.post("/api/audits/:id/enhance", async (request, response) => {
     try {
       const run = await loadAuditRun(request.params.id);
@@ -242,7 +444,7 @@ export function createApiApp() {
         ...run,
         ai: {
           provider: config.aiProvider === "openrouter" ? "openrouter" : "none",
-          model: config.aiProvider === "openrouter" ? config.openRouterModel : "deterministic",
+          model: config.aiProvider === "openrouter" ? config.textModel : "deterministic",
           status: "pending",
           generatedFields: [],
         },
