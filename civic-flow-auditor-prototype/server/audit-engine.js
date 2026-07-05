@@ -7,6 +7,7 @@ import { nowIso, safetyNotes } from "../shared/audit-contract.js";
 import { defaultAgentSteps } from "../shared/demo-data.js";
 import {
   buildStagesFromPagesAndFindings,
+  canonicalPageUrl,
   classifyJourney,
   createFinding,
   createTimingMetadata,
@@ -110,24 +111,30 @@ async function fetchFallbackSnapshot(url, maxPages, { skippedActions = [], signa
   const pages = [];
   const documents = [];
   const visited = new Set();
-  const queue = [url];
+  const startUrl = canonicalPageUrl(url);
+  const queued = new Set([startUrl]);
+  const queue = [startUrl];
 
   while (queue.length && pages.length < maxPages) {
     throwIfCancelled(signal);
     const current = queue.shift();
-    if (!current || visited.has(current)) continue;
-    visited.add(current);
+    const currentKey = canonicalPageUrl(current, startUrl);
+    if (!currentKey || visited.has(currentKey)) continue;
+    visited.add(currentKey);
 
     try {
-      const safeCurrent = await validateScanTarget(current, { checkRedirects: false });
+      const safeCurrent = await validateScanTarget(currentKey, { checkRedirects: false });
       const response = await fetch(safeCurrent, { redirect: "manual", signal });
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
         if (location) {
-          const redirectUrl = new URL(location, safeCurrent).href;
+          const redirectUrl = canonicalPageUrl(new URL(location, safeCurrent).href, startUrl);
           try {
             await validateScanTarget(redirectUrl, { checkRedirects: false });
-            if (!visited.has(redirectUrl) && pages.length + queue.length < maxPages) queue.push(redirectUrl);
+            if (!visited.has(redirectUrl) && !queued.has(redirectUrl) && pages.length + queue.length < maxPages) {
+              queued.add(redirectUrl);
+              queue.push(redirectUrl);
+            }
           } catch (error) {
             pushSkipped(skippedActions, {
               url: redirectUrl,
@@ -145,25 +152,26 @@ async function fetchFallbackSnapshot(url, maxPages, { skippedActions = [], signa
       const title = html.match(/<title[^>]*>(.*?)<\/title>/is)?.[1] || "";
       const heading = html.match(/<h1[^>]*>(.*?)<\/h1>/is)?.[1] || "";
       const textSample = compactText(html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " "));
+      const currentUrl = canonicalPageUrl(safeCurrent, startUrl);
       const links = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gis)].map((match) => {
-        const href = new URL(match[1], current).href;
+        const href = canonicalPageUrl(new URL(match[1], currentUrl).href, startUrl);
         const text = compactText(match[2].replace(/<[^>]+>/g, " "), 140);
         return { href, text };
       });
       const pdfs = links.filter((link) => /\.pdf($|[?#])/i.test(link.href)).map((link) => ({ url: link.href, text: link.text }));
-      const journey = classifyJourney({ url: current, title, heading, textSample });
+      const journey = classifyJourney({ url: currentUrl, title, heading, textSample });
       documents.push(
         ...pdfs.map((pdf) => ({
           url: pdf.url,
           title: pdf.text || "Linked PDF",
           matchedStage: journey.id,
           matchedStageReason: `Linked from ${journey.label} page during fallback discovery.`,
-          sourcePageUrl: current,
+          sourcePageUrl: currentUrl,
         })),
       );
 
       pages.push({
-        url: current,
+        url: currentUrl,
         title,
         heading,
         textSample,
@@ -177,8 +185,10 @@ async function fetchFallbackSnapshot(url, maxPages, { skippedActions = [], signa
 
       for (const link of links) {
         if (pages.length + queue.length >= maxPages) break;
-        if (!isSameDomainUrl(link.href, url) || /\.pdf($|[?#])/i.test(link.href) || visited.has(link.href)) continue;
-        queue.push(link.href);
+        const linkKey = canonicalPageUrl(link.href, startUrl);
+        if (!isSameDomainUrl(linkKey, url) || /\.pdf($|[?#])/i.test(link.href) || visited.has(linkKey) || queued.has(linkKey)) continue;
+        queued.add(linkKey);
+        queue.push(linkKey);
       }
     } catch {
       // Fallback crawler is best-effort. Individual failures should not stop the audit.
@@ -196,7 +206,9 @@ export async function crawlSite({ url, max_pages = config.maxPages, same_domain_
   const pages = [];
   const documents = [];
   const visited = new Set();
-  const queue = [safeUrl];
+  const startUrl = canonicalPageUrl(safeUrl);
+  const queued = new Set([startUrl]);
+  const queue = [startUrl];
   let browser;
 
   try {
@@ -207,14 +219,15 @@ export async function crawlSite({ url, max_pages = config.maxPages, same_domain_
     while (queue.length && pages.length < maxPages) {
       throwIfCancelled(signal);
       const current = queue.shift();
-      if (!current || visited.has(current)) continue;
-      visited.add(current);
+      const currentKey = canonicalPageUrl(current, startUrl);
+      if (!currentKey || visited.has(currentKey)) continue;
+      visited.add(currentKey);
 
       const page = await context.newPage();
       page.on("dialog", (dialog) => dialog.dismiss().catch(() => {}));
 
       try {
-        await page.goto(current, { waitUntil: "domcontentloaded", timeout: 18000 });
+        await page.goto(currentKey, { waitUntil: "domcontentloaded", timeout: 18000 });
         await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
         const finalUrl = await validateScanTarget(page.url(), { checkRedirects: false });
         if (same_domain_only && !isSameDomainUrl(finalUrl, safeUrl)) {
@@ -226,9 +239,13 @@ export async function crawlSite({ url, max_pages = config.maxPages, same_domain_
           });
           continue;
         }
+        const finalKey = canonicalPageUrl(finalUrl, startUrl);
+        if (visited.has(finalKey) && finalKey !== currentKey) continue;
+        visited.add(finalKey);
+        if (pages.some((snapshot) => canonicalPageUrl(snapshot.url, startUrl) === finalKey)) continue;
 
         const pageIndex = pages.length + 1;
-        const currentUrl = finalUrl;
+        const currentUrl = finalKey;
         const screenshotFile = `page-${String(pageIndex).padStart(2, "0")}-${cleanFilePart(new URL(currentUrl).hostname)}.png`;
         const screenshotPath = path.join(runDir, screenshotFile);
         await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
@@ -320,14 +337,16 @@ export async function crawlSite({ url, max_pages = config.maxPages, same_domain_
 
         for (const link of snapshot.links) {
           if (pages.length + queue.length >= maxPages) break;
+          const linkKey = canonicalPageUrl(link.href, startUrl);
           if (/\.pdf($|[?#])/i.test(link.href)) continue;
-          if (same_domain_only && !isSameDomainUrl(link.href, safeUrl)) continue;
-          if (visited.has(link.href) || queue.includes(link.href)) continue;
-          queue.push(link.href);
+          if (same_domain_only && !isSameDomainUrl(linkKey, safeUrl)) continue;
+          if (visited.has(linkKey) || queued.has(linkKey)) continue;
+          queued.add(linkKey);
+          queue.push(linkKey);
         }
       } catch (error) {
         pages.push({
-          url: current,
+          url: currentKey || current,
           title: "",
           heading: "",
           textSample: "",

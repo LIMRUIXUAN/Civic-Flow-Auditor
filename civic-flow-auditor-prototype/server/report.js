@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
-import { guidelineRefsFor, humanReviewNoteFor } from "../shared/audit-utils.js";
+import { dedupePageSnapshots, guidelineRefsFor, humanReviewNoteFor } from "../shared/audit-utils.js";
 import { config } from "./config.js";
 import { getRunDir } from "./store.js";
 
@@ -62,6 +62,7 @@ function buildTicketMarkdown(auditRun) {
 }
 
 export async function buildReportHtml(auditRun) {
+  const discoveredPages = dedupePageSnapshots(auditRun.pages || []);
   const images = new Map();
   let inlineEvidenceCount = 0;
   for (const finding of auditRun.findings) {
@@ -78,6 +79,7 @@ export async function buildReportHtml(auditRun) {
         <tr>
           <td>${escapeHtml(stage.name)}</td>
           <td>${stage.pages}</td>
+          <td>${stage.documents || 0}</td>
           <td>${stage.critical}</td>
           <td>${stage.serious}</td>
           <td>${stage.minor}</td>
@@ -200,7 +202,7 @@ export async function buildReportHtml(auditRun) {
     <p><b>${escapeHtml(inputTitle)}:</b> ${escapeHtml(inputLabel)}<br><b>Scan depth:</b> ${escapeHtml(auditRun.depth)}<br><b>Status:</b> ${escapeHtml(auditRun.status)}</p>
     <p class="meta"><b>Report mode:</b> ${escapeHtml(aiLabel)}<br><b>Lighthouse accessibility:</b> ${escapeHtml(lighthouseLabel)}<br><b>OCR:</b> ${escapeHtml(auditRun.scanner?.ocr?.status || "not-run")}<br><b>Timing:</b> ${escapeHtml(timingLabel)}</p>
     <section class="summary" aria-label="Audit summary">
-      <div><b>${auditRun.pages.length}</b><br>Pages discovered</div>
+      <div><b>${discoveredPages.length}</b><br>Pages discovered</div>
       <div><b>${auditRun.documents.length}</b><br>Documents found</div>
       <div><b>${auditRun.stages.length}</b><br>Journey stages</div>
       <div><b>${auditRun.findings.length}</b><br>Findings</div>
@@ -214,8 +216,8 @@ export async function buildReportHtml(auditRun) {
     </section>
     <h2>User Journey Map</h2>
     <table>
-      <thead><tr><th>Stage</th><th>Pages</th><th>Critical</th><th>High</th><th>Medium/Low</th></tr></thead>
-      <tbody>${stageRows || "<tr><td colspan=\"5\">No stages discovered.</td></tr>"}</tbody>
+      <thead><tr><th>Stage</th><th>Pages</th><th>Documents</th><th>Critical</th><th>High</th><th>Medium/Low</th></tr></thead>
+      <tbody>${stageRows || "<tr><td colspan=\"6\">No stages discovered.</td></tr>"}</tbody>
     </table>
     <h2>Linked Documents And Scanned Files</h2>
     <table>

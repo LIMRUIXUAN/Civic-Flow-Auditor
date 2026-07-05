@@ -26,7 +26,7 @@ import {
   artifactUrl,
 } from "./store.js";
 import { cropDocumentImage, cropSubRegion } from "./auto-crop.js";
-import { buildDocumentScanFindings } from "./document-findings.js";
+import { buildDocumentScanFindings, buildRefinedDocumentFindingPatch } from "./document-findings.js";
 import { analyzeDocumentImage, refineRegion } from "./vision-provider.js";
 import { createWorker } from "tesseract.js";
 
@@ -62,6 +62,16 @@ async function removeStoredFile(filePath) {
 
 function sanitizeArtifactUrl(url) {
   return typeof url === "string" && url.startsWith("/artifacts/") ? url : undefined;
+}
+
+export function scanDocumentTitle(uploadedFilename) {
+  const cleaned = String(uploadedFilename || "")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()
+    ?.trim()
+    .slice(0, 120);
+  return cleaned || "Scanned document";
 }
 
 function artifactPathFromUrl(url) {
@@ -181,12 +191,13 @@ export function createApiApp() {
   });
 
   app.post("/api/scan-image", async (request, response) => {
-    const { image, filename } = request.body;
+    const { image, filename: uploadedFilename } = request.body;
     if (!image) {
       response.status(400).json({ error: "Image data (base64) is required." });
       return;
     }
 
+    const documentTitle = scanDocumentTitle(uploadedFilename);
     const scanStartedAt = nowIso();
     try {
       // 1. Crop using auto-crop (calls NVIDIA vision crop detection)
@@ -196,10 +207,10 @@ export function createApiApp() {
 
       // 2. Save cropped image as a static artifact
       await ensureRunDir("doc-scan");
-      const filename = `crop-${Date.now()}-${nanoid(6)}.png`;
-      const destPath = getArtifactPath("doc-scan", filename);
+      const artifactFilename = `crop-${Date.now()}-${nanoid(6)}.png`;
+      const destPath = getArtifactPath("doc-scan", artifactFilename);
       await fs.writeFile(destPath, croppedBuffer);
-      const croppedImageUrl = artifactUrl("doc-scan", filename);
+      const croppedImageUrl = artifactUrl("doc-scan", artifactFilename);
 
       // 3. Analyze cropped image regions via NVIDIA Vision
       let result;
@@ -244,7 +255,7 @@ export function createApiApp() {
 
       const document = {
         url: croppedImageUrl,
-        title: filename || "Scanned document",
+        title: documentTitle,
         extractedText: result.full_text || "",
         textLength: (result.full_text || "").length,
         imageOnly: true,
@@ -261,6 +272,10 @@ export function createApiApp() {
         croppedImagePath: destPath,
         filename: document.title,
       });
+      const regionsWithFindingIds = (result.regions || []).map((region, index) => ({
+        ...region,
+        findingId: findings[index]?.id,
+      }));
       const scanFinishedAt = nowIso();
 
       response.json({
@@ -269,7 +284,7 @@ export function createApiApp() {
         croppedBase64,
         document,
         findings,
-        regions: result.regions || [],
+        regions: regionsWithFindingIds,
         fullText: result.full_text || "",
         suggestions: result.suggestions || [],
         method,
@@ -283,7 +298,7 @@ export function createApiApp() {
   });
 
   app.post("/api/scan-image/refine", async (request, response) => {
-    const { image, region } = request.body;
+    const { image, region, filename, findingId, croppedImageUrl } = request.body;
     if (!image || !region) {
       response.status(400).json({ error: "Cropped image and region parameters are required." });
       return;
@@ -314,13 +329,25 @@ export function createApiApp() {
         };
       }
 
+      const refinedPatch = await buildRefinedDocumentFindingPatch({
+        region,
+        refinedResult: result,
+        filename: scanDocumentTitle(filename),
+        findingId,
+        croppedImageUrl,
+      });
+      const refinedRegion = refinedPatch.region;
+
       response.json({
-        label: region.label,
-        type: result.type || region.type,
-        text: result.extracted_text || region.text,
-        accessibility_notes: result.detailed_accessibility_evaluation || "Requires manual inspection.",
-        fix: result.remediation_fix || "Check target WCAG guideline for details.",
-        method
+        label: refinedRegion.label,
+        findingId: refinedPatch.findingId,
+        type: refinedRegion.type,
+        text: refinedRegion.text,
+        accessibility_notes: refinedRegion.accessibility_notes,
+        fix: refinedPatch.findingPatch.fix,
+        findingPatch: refinedPatch.findingPatch,
+        method,
+        aiReasoning: refinedPatch.aiReasoning,
       });
     } catch (error) {
       console.error("Refine image error:", error);

@@ -94,7 +94,20 @@ export function isSameDomainUrl(candidate, originUrl) {
   }
 }
 
+export function canonicalPageUrl(url = "", baseUrl) {
+  const value = String(url || "");
+  if (!value) return "";
+  try {
+    const parsed = baseUrl ? new URL(value, baseUrl) : new URL(value);
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return value.split("#")[0];
+  }
+}
+
 export function classifyJourney(input = {}) {
+  const stageHints = [input.url, input.title, input.heading].filter(Boolean).join(" ").toLowerCase();
   const searchable = [
     input.url,
     input.title,
@@ -106,10 +119,10 @@ export function classifyJourney(input = {}) {
     .join(" ")
     .toLowerCase();
 
-  if (/\b(pdf|handbook|guide|manual|policy|document)\b/.test(searchable)) return stage("pdf");
+  if (/\.pdf($|[?#])/.test(stageHints) || /\b(pdf|handbook|manual|policy)\b/.test(stageHints)) return stage("pdf");
   if (/\b(confirm|confirmation|receipt|success|complete)\b/.test(searchable)) return stage("confirm");
   if (/\b(review|submit|submission|apply now|finish)\b/.test(searchable)) return stage("review");
-  if (/\b(upload|attachment|document|file)\b/.test(searchable)) return stage("upload");
+  if (/\b(upload|attachment|attach|supporting document|proof of|photo id|identification|file upload)\b/.test(searchable)) return stage("upload");
   if (/\b(verify|verification|authentication|identity|2fa|code)\b/.test(searchable)) return stage("verify");
   if (/\b(notification|contact preference|email preference|sms|alerts?)\b/.test(searchable)) return stage("notify");
   if (/\b(personal|address|phone|birth|ssn|income|household)\b/.test(searchable)) return stage("personal");
@@ -122,6 +135,12 @@ export function classifyJourney(input = {}) {
 export function stage(stageId) {
   const found = journeyStageOrder.find(([id]) => id === stageId) || journeyStageOrder[0];
   return { id: found[0], label: found[1] };
+}
+
+function normalizeStageIdForUrl(stageId = "general", url = "") {
+  const candidate = stage(stageId).id;
+  if (candidate !== "pdf") return candidate;
+  return /\.pdf($|[?#])/i.test(String(url || "")) ? "pdf" : classifyJourney({ url }).id;
 }
 
 export function mapAxeImpactToSeverity(impact) {
@@ -147,6 +166,174 @@ export function sortFindingsBySeverity(findings = []) {
   });
 }
 
+function normalizeFindingPart(value = "") {
+  return String(value).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function canonicalFindingUrl(url = "") {
+  const value = String(url || "");
+  if (!value) return "";
+  return canonicalPageUrl(value);
+}
+
+function uniqueStrings(values = []) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const cleaned = String(value || "").trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    result.push(cleaned);
+  }
+  return result;
+}
+
+function uniqueIssueBoxes(values = []) {
+  const seen = new Set();
+  const result = [];
+  for (const box of values) {
+    if (!box) continue;
+    const key = [box.x, box.y, box.width, box.height].map((part) => Math.round(Number(part || 0))).join(":");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ ...box, label: String(result.length + 1) });
+  }
+  return result.slice(0, 8);
+}
+
+function duplicateFindingKey(finding = {}) {
+  return [
+    canonicalFindingUrl(finding.url),
+    normalizeFindingPart(finding.stage),
+    normalizeFindingPart(finding.rule || finding.guideline || finding.title),
+    normalizeFindingPart(finding.guideline),
+  ].join("|");
+}
+
+function mergeDuplicateFinding(existing, incoming) {
+  const base = (incoming.evidenceScore || 0) > (existing.evidenceScore || 0) ? incoming : existing;
+  const other = base === incoming ? existing : incoming;
+  const baseSelectors = base.relatedSelectors?.length ? base.relatedSelectors : [base.selector];
+  const otherSelectors = other.relatedSelectors?.length ? other.relatedSelectors : [other.selector];
+  const relatedSelectors = uniqueStrings([
+    ...baseSelectors,
+    ...otherSelectors,
+  ]);
+  const occurrenceCount = Math.max(1, relatedSelectors.length || base.occurrenceCount || other.occurrenceCount || 1);
+  const issueBoxes =
+    base.screenshotUrl && other.screenshotUrl && base.screenshotUrl !== other.screenshotUrl
+      ? uniqueIssueBoxes(base.issueBoxes || [])
+      : uniqueIssueBoxes([...(base.issueBoxes || []), ...(other.issueBoxes || [])]);
+  const selector = relatedSelectors.length > 1 ? `${relatedSelectors[0]} and ${relatedSelectors.length - 1} more` : relatedSelectors[0] || base.selector;
+  const sourceSnippet =
+    occurrenceCount > 1
+      ? uniqueStrings([base.sourceSnippet, other.sourceSnippet]).slice(0, 2).join("\n\n")
+      : base.sourceSnippet || other.sourceSnippet;
+  const description = `${base.title}${base.url ? ` on ${canonicalFindingUrl(base.url)}` : ""}. ${base.impact} ${
+    occurrenceCount > 1 ? `${occurrenceCount} affected selectors are grouped in this finding.` : ""
+  }`;
+
+  return {
+    ...base,
+    selector,
+    sourceSnippet,
+    issueBoxes,
+    occurrenceCount,
+    relatedSelectors,
+    evidenceScore: Math.max(base.evidenceScore || 0, other.evidenceScore || 0),
+    ticket: buildTicket({
+      title: base.title,
+      description,
+      guideline: base.guideline,
+      severity: base.severity,
+      component: base.stageLabel || "Public website",
+    }),
+  };
+}
+
+function ensureUniqueFindingIds(findings = []) {
+  const seen = new Map();
+  return findings.map((finding, index) => {
+    const fallbackPrefix = String(finding.id || "AUD").split("-")[0] || "AUD";
+    const baseId = finding.id || `${fallbackPrefix}-${String(index + 1).padStart(3, "0")}`;
+    const count = seen.get(baseId) || 0;
+    seen.set(baseId, count + 1);
+    return {
+      ...finding,
+      id: count ? `${baseId}-${count + 1}` : baseId,
+    };
+  });
+}
+
+export function buildIssueFlow(findings = [], selectedIssueId = "", selectedStage = "all") {
+  const stageIssues = selectedStage === "all" ? findings : findings.filter((issue) => issue.stage === selectedStage);
+  const issues = stageIssues.length ? stageIssues : findings;
+  const currentIndex = issues.findIndex((issue) => issue.id === selectedIssueId);
+  const safeIndex = currentIndex >= 0 ? currentIndex : issues.length ? 0 : -1;
+  const currentIssue = safeIndex >= 0 ? issues[safeIndex] : null;
+
+  return {
+    issues,
+    currentIssue,
+    currentIndex: safeIndex,
+    previousIssue: safeIndex > 0 ? issues[safeIndex - 1] : null,
+    nextIssue: safeIndex >= 0 && safeIndex < issues.length - 1 ? issues[safeIndex + 1] : null,
+    byId: new Map(
+      issues.map((issue, index) => [
+        issue.id,
+        {
+          id: issue.id,
+          previousId: index > 0 ? issues[index - 1].id : null,
+          nextId: index < issues.length - 1 ? issues[index + 1].id : null,
+        },
+      ]),
+    ),
+  };
+}
+
+export function getTopBlockerSummary(findings = [], stages = []) {
+  const criticalCount = findings.filter((finding) => finding.severity === "Critical").length;
+  const highCount = findings.filter((finding) => finding.severity === "High").length;
+  const sorted = sortFindingsBySeverity(findings);
+  const topFinding = sorted[0];
+
+  if (!topFinding) {
+    return {
+      hasBlockers: false,
+      topFinding: null,
+      criticalCount,
+      highCount,
+      blockerCount: 0,
+      affectedStage: "",
+      affectedStageLabel: "No active blockers",
+      recommendedNextAction: "Run a website audit or document scan to build the audit case.",
+      summary: "No findings yet",
+    };
+  }
+
+  const stageMatch = stages.find((stageItem) => stageItem.id === topFinding.stage);
+  const affectedStageLabel = topFinding.stageLabel || stageMatch?.name || stage(topFinding.stage).label;
+  const blockerCount = criticalCount + highCount;
+  const severityAction =
+    topFinding.severity === "Critical"
+      ? "Resolve or assign this blocker before residents are asked to use this step."
+      : topFinding.severity === "High"
+        ? "Prioritize this issue in the next developer ticket batch."
+        : "Review this issue after the critical and high blockers are triaged.";
+
+  return {
+    hasBlockers: true,
+    topFinding,
+    criticalCount,
+    highCount,
+    blockerCount,
+    affectedStage: topFinding.stage,
+    affectedStageLabel,
+    recommendedNextAction: severityAction,
+    summary: `${topFinding.severity}: ${topFinding.title}`,
+  };
+}
+
 export function evidenceScoreForFinding(finding = {}) {
   let score = 20;
   if (finding.url) score += 15;
@@ -160,27 +347,25 @@ export function evidenceScoreForFinding(finding = {}) {
 export function dedupeAndSortFindings(findings = []) {
   const seen = new Map();
   for (const finding of findings) {
+    const normalizedStageId = normalizeStageIdForUrl(finding.stage, finding.url);
     const normalized = {
       ...finding,
+      stage: normalizedStageId,
+      stageLabel: normalizedStageId === finding.stage ? finding.stageLabel : stage(normalizedStageId).label,
       rule: finding.rule || finding.guideline || finding.title,
     };
     normalized.evidenceScore = finding.evidenceScore || evidenceScoreForFinding(normalized);
-    const key = [
-      normalized.url || "",
-      normalized.selector || "",
-      normalized.rule || normalized.title || "",
-    ]
-      .map((part) => String(part).trim().toLowerCase())
-      .join("|");
+    normalized.relatedSelectors = uniqueStrings([...(finding.relatedSelectors || []), finding.selector]);
+    normalized.occurrenceCount = Math.max(1, normalized.relatedSelectors.length || finding.occurrenceCount || 1);
+    const key = duplicateFindingKey(normalized);
     const existing = seen.get(key);
     if (!existing || (normalized.evidenceScore || 0) > (existing.evidenceScore || 0)) {
-      seen.set(key, normalized);
+      seen.set(key, existing ? mergeDuplicateFinding(existing, normalized) : normalized);
+    } else {
+      seen.set(key, mergeDuplicateFinding(existing, normalized));
     }
   }
-  return sortFindingsBySeverity([...seen.values()]).map((finding, index) => ({
-    ...finding,
-    id: finding.id || `AUD-${String(index + 1).padStart(3, "0")}`,
-  }));
+  return ensureUniqueFindingIds(sortFindingsBySeverity([...seen.values()]));
 }
 
 export function severityToStageBucket(severity) {
@@ -372,13 +557,16 @@ export function createFinding({
 }
 
 export function buildStagesFromPagesAndFindings(pages = [], documents = [], findings = []) {
+  const uniquePages = dedupePageSnapshots(pages);
   const pageCounts = new Map();
-  for (const page of pages) {
-    pageCounts.set(page.session || "general", (pageCounts.get(page.session || "general") || 0) + 1);
+  for (const page of uniquePages) {
+    const stageId = normalizeStageIdForUrl(page.session || "general", page.url);
+    pageCounts.set(stageId, (pageCounts.get(stageId) || 0) + 1);
   }
+  const documentCounts = new Map();
   for (const document of documents) {
     const stageId = document.matchedStage || "pdf";
-    pageCounts.set(stageId, (pageCounts.get(stageId) || 0) + 1);
+    documentCounts.set(stageId, (documentCounts.get(stageId) || 0) + 1);
   }
 
   const counts = new Map();
@@ -390,13 +578,40 @@ export function buildStagesFromPagesAndFindings(pages = [], documents = [], find
   }
 
   return journeyStageOrder
-    .filter(([id]) => pageCounts.has(id) || counts.has(id))
+    .filter(([id]) => pageCounts.has(id) || documentCounts.has(id) || counts.has(id))
     .map(([id, name]) => ({
       id,
       name,
       pages: pageCounts.get(id) || 0,
+      documents: documentCounts.get(id) || 0,
       critical: counts.get(id)?.critical || 0,
       serious: counts.get(id)?.serious || 0,
       minor: counts.get(id)?.minor || 0,
     }));
+}
+
+export function dedupePageSnapshots(pages = []) {
+  const seen = new Map();
+  for (const page of pages) {
+    const key = canonicalPageUrl(page?.url || "");
+    if (!key) continue;
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, { ...page, url: key });
+      continue;
+    }
+    seen.set(key, {
+      ...existing,
+      ...page,
+      url: key,
+      scanned: Boolean(existing.scanned || page.scanned),
+      links: existing.links?.length ? existing.links : page.links,
+      pdfs: existing.pdfs?.length ? existing.pdfs : page.pdfs,
+      forms: existing.forms?.length ? existing.forms : page.forms,
+      screenshotPath: existing.screenshotPath || page.screenshotPath,
+      screenshotUrl: existing.screenshotUrl || page.screenshotUrl,
+      error: existing.error || page.error,
+    });
+  }
+  return [...seen.values()];
 }

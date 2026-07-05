@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
-import { createApiApp } from "../server/api.js";
+import { createApiApp, scanDocumentTitle } from "../server/api.js";
 import { artifactUrl, ensureRunDir, getArtifactPath } from "../server/store.js";
 
 const tinyPng = Buffer.from(
@@ -19,6 +19,13 @@ async function withServer(fn) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
+
+test("scanDocumentTitle preserves uploaded document names separately from artifact filenames", () => {
+  assert.equal(scanDocumentTitle("C:\\fakepath\\benefits-appeal-notice.png"), "benefits-appeal-notice.png");
+  assert.equal(scanDocumentTitle("../private/form.png"), "form.png");
+  assert.equal(scanDocumentTitle(""), "Scanned document");
+  assert.notEqual(scanDocumentTitle("benefits-appeal-notice.png"), "crop-123.png");
+});
 
 test("document-report generates html pdf and tickets, then purge removes local artifact references", async () => {
   const sourceRunId = "api-doc-src";

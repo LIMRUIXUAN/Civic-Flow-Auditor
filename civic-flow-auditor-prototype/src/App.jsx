@@ -16,6 +16,7 @@ import {
   Headphones,
   Landmark,
   ListChecks,
+  Maximize2,
   Play,
   Route,
   ShieldCheck,
@@ -23,10 +24,19 @@ import {
   TriangleAlert,
   Volume2,
   Workflow,
+  X,
 } from "lucide-react";
 import { scanDepths } from "../shared/audit-contract.js";
 import { createDemoAuditRun, toolDefinitions } from "../shared/demo-data.js";
-import { buildStagesFromPagesAndFindings, guidelineRefsFor, humanReviewNoteFor } from "../shared/audit-utils.js";
+import {
+  buildIssueFlow,
+  buildStagesFromPagesAndFindings,
+  dedupeAndSortFindings,
+  dedupePageSnapshots,
+  getTopBlockerSummary,
+  guidelineRefsFor,
+  humanReviewNoteFor,
+} from "../shared/audit-utils.js";
 
 const demoAuditRun = createDemoAuditRun();
 const demoQueryEnabled = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1";
@@ -161,6 +171,7 @@ function AuditHistoryPanel({ history, loadHistoryAudit, refreshHistory, compact 
 
 function EvidenceImage({ issue }) {
   const [imageSize, setImageSize] = useState(null);
+  const [isInspecting, setIsInspecting] = useState(false);
   const focusBox = issue?.issueBoxes?.[0];
   const focusStyle =
     focusBox && imageSize?.width && imageSize?.height
@@ -172,16 +183,62 @@ function EvidenceImage({ issue }) {
         }
       : { objectPosition: "50% 28%" };
 
+  useEffect(() => {
+    if (!isInspecting) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") setIsInspecting(false);
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isInspecting]);
+
   return (
-    <div className="mock-browser evidence-image-frame">
-      <img
-        className="focused-evidence-image"
-        src={issue.screenshotUrl}
-        alt={`Annotated evidence for ${issue.id}`}
-        style={focusStyle}
-        onLoad={(event) => setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
-      />
-    </div>
+    <>
+      <div className="mock-browser evidence-image-frame">
+        <button
+          className="evidence-image-button"
+          type="button"
+          aria-label={`Open full screenshot evidence for ${issue.id}`}
+          aria-haspopup="dialog"
+          title="Open full screenshot"
+          onClick={() => setIsInspecting(true)}
+        >
+          <img
+            className="focused-evidence-image"
+            src={issue.screenshotUrl}
+            alt={`Annotated evidence for ${issue.id}`}
+            style={focusStyle}
+            onLoad={(event) => setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+          />
+          <span className="evidence-expand-icon" aria-hidden="true">
+            <Maximize2 size={16} />
+          </span>
+        </button>
+      </div>
+      {isInspecting ? (
+        <div className="evidence-lightbox" role="dialog" aria-modal="true" aria-labelledby="evidence-lightbox-title" onClick={() => setIsInspecting(false)}>
+          <div className="evidence-lightbox-panel" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span className={`finding-badge ${issue.severity.toLowerCase()}`}>{issue.severity}</span>
+                <h3 id="evidence-lightbox-title">{issue.title}</h3>
+              </div>
+              <button className="icon-button" type="button" aria-label="Close full screenshot" onClick={() => setIsInspecting(false)}>
+                <X size={20} />
+              </button>
+            </header>
+            <div className="evidence-lightbox-image-wrap">
+              <img src={issue.screenshotUrl} alt={`Full annotated screenshot evidence for ${issue.id}`} />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -224,6 +281,33 @@ function statusLabel(status) {
   return "Ready to scan";
 }
 
+function formatDuration(durationMs) {
+  if (typeof durationMs !== "number") return "Timing pending";
+  if (durationMs < 1000) return `${durationMs}ms`;
+  return `${(durationMs / 1000).toFixed(durationMs < 10000 ? 1 : 0)}s`;
+}
+
+function aiStatusLabel(status) {
+  if (status === "enhanced") return "AI enhanced";
+  if (status === "failed") return "AI failed";
+  if (status === "unavailable") return "Deterministic reasoning";
+  if (status === "pending") return "AI pending";
+  return "Deterministic reasoning";
+}
+
+function artifactStatusLabel({ ready, reviewConfirmed, reportReady }) {
+  if (!reportReady) return "Waiting for report";
+  if (!ready) return "Not generated";
+  return reviewConfirmed ? "Ready" : "Review required";
+}
+
+function stageResourceLabel(stage) {
+  const parts = [];
+  if (stage.pages) parts.push(`${stage.pages} ${stage.pages === 1 ? "page" : "pages"}`);
+  if (stage.documents) parts.push(`${stage.documents} ${stage.documents === 1 ? "document" : "documents"}`);
+  return parts.length ? parts.join(", ") : "No pages";
+}
+
 function App() {
   const [scanDepth, setScanDepth] = useState("standard");
   const [url, setUrl] = useState(demoQueryEnabled ? demoAuditRun.url : "https://example.com/");
@@ -247,26 +331,86 @@ function App() {
   const documentScanRef = useRef({ documents: [], findings: [] });
 
   const isRunning = auditRun.status === "queued" || auditRun.status === "validating" || auditRun.status === "scanning";
-  const stages = auditRun.stages;
-  const findings = auditRun.findings;
+  const findings = useMemo(() => dedupeAndSortFindings(auditRun.findings || []), [auditRun.findings]);
+  const casePages = useMemo(() => dedupePageSnapshots(auditRun.pages || []), [auditRun.pages]);
+  const stages = useMemo(
+    () => buildStagesFromPagesAndFindings(casePages, auditRun.documents || [], findings),
+    [casePages, auditRun.documents, findings],
+  );
   const agentSteps = auditRun.agentSteps;
-  const pagesScanned = auditRun.pages.filter((page) => page.scanned).length || auditRun.pages.length;
+  const pagesScanned = casePages.filter((page) => page.scanned).length || casePages.length;
   const isDemoAudit = backendMode === "demo";
   const aiEnhanced = auditRun.ai?.status === "enhanced";
   const aiPending = auditRun.ai?.status === "pending";
   const deterministicMode = !aiEnhanced && !aiPending;
+  const activeScanImage = scannedImages.find((img) => img.id === selectedScanImageId) || scannedImages[0] || null;
+  const topBlockerSummary = useMemo(() => getTopBlockerSummary(findings, stages), [findings, stages]);
+  const reportReady = auditRun.status === "report-ready";
+  const activeScanTiming = activeScanImage?.timing || auditRun.scanner?.timing;
+  const localEvidencePurged =
+    auditRun.documents.some((document) => document.url === "purged-local-scan-artifact") ||
+    auditRun.safetyNotes?.some((note) => /purged/i.test(note));
+  const localEvidenceStored =
+    !localEvidencePurged &&
+    (auditRun.documents.some((document) => typeof document.url === "string" && document.url.startsWith("/artifacts/")) ||
+      Boolean(auditRun.artifacts?.screenshots?.length) ||
+      scannedImages.some((image) => image.croppedImageUrl));
+  const scanEngineLabel =
+    activeScanImage?.method === "nvidia-vision"
+      ? "NVIDIA Vision"
+      : activeScanImage?.method === "tesseract"
+        ? "Tesseract fallback"
+        : auditRun.scanner?.ocr?.status === "complete"
+          ? "OCR complete"
+          : "Engine ready";
+  const reasoningStatus = activeScanImage?.aiReasoning?.status || auditRun.ai?.status || "deterministic";
+  const caseStatusChips = [
+    { label: "Case", value: statusLabel(auditRun.status), tone: reportReady ? "ready" : isRunning ? "active" : "idle" },
+    { label: "Vision", value: scanEngineLabel, tone: activeScanImage?.method === "tesseract" ? "warning" : "ready" },
+    { label: "Reasoning", value: aiStatusLabel(reasoningStatus), tone: reasoningStatus === "failed" ? "warning" : reasoningStatus === "enhanced" ? "ready" : "idle" },
+    {
+      label: "Timing",
+      value:
+        typeof activeScanTiming?.durationMs === "number"
+          ? `${formatDuration(activeScanTiming.durationMs)} ${activeScanTiming.withinTarget === false ? "over target" : "within target"}`
+          : "Timing pending",
+      tone: activeScanTiming?.withinTarget === false ? "warning" : "idle",
+    },
+    {
+      label: "Privacy",
+      value: localEvidencePurged ? "Local evidence purged" : localEvidenceStored ? "Local evidence stored" : "No local evidence saved",
+      tone: localEvidencePurged ? "ready" : localEvidenceStored ? "warning" : "idle",
+    },
+  ];
+  const exportPackageItems = [
+    {
+      type: "HTML",
+      label: "HTML report",
+      icon: BookOpenCheck,
+      ready: Boolean(auditRun.artifacts?.htmlReportUrl),
+    },
+    {
+      type: "PDF",
+      label: "PDF report",
+      icon: Download,
+      ready: Boolean(auditRun.artifacts?.pdfReportUrl),
+    },
+    {
+      type: "Tickets",
+      label: "Developer tickets",
+      icon: FileText,
+      ready: Boolean(auditRun.artifacts?.ticketReportUrl),
+    },
+  ].map((item) => ({
+    ...item,
+    status: artifactStatusLabel({ ready: item.ready, reviewConfirmed, reportReady }),
+  }));
 
-  const visibleIssues = useMemo(() => {
-    if (selectedStage === "all") return findings;
-    const stageIssues = findings.filter((issue) => issue.stage === selectedStage);
-    return stageIssues.length ? stageIssues : findings;
-  }, [findings, selectedStage]);
-
-  const selectedIssue = findings.find((issue) => issue.id === selectedIssueId) || visibleIssues[0] || null;
+  const issueFlow = useMemo(() => buildIssueFlow(findings, selectedIssueId, selectedStage), [findings, selectedIssueId, selectedStage]);
+  const visibleIssues = issueFlow.issues;
+  const selectedIssue = issueFlow.currentIssue;
   const selectedGuidelineRefs = selectedIssue ? (selectedIssue.guidelineRefs?.length ? selectedIssue.guidelineRefs : guidelineRefsFor(selectedIssue.guideline)) : [];
   const selectedHumanReviewNote = selectedIssue ? selectedIssue.humanReviewNote || humanReviewNoteFor(selectedIssue.guideline) : "";
-  const selectedIssueIndex = visibleIssues.findIndex((issue) => issue.id === selectedIssue?.id);
-  const canNavigateIssues = visibleIssues.length > 1 && selectedIssueIndex >= 0;
 
   async function persistDocumentAuditRun(nextRun) {
     const response = await fetch("/api/audits/document-report", {
@@ -325,6 +469,10 @@ function App() {
         regions: [],
         fullText: "",
         suggestions: [],
+        method: "",
+        aiReasoning: null,
+        timing: null,
+        localEvidencePurged: false,
         error: ""
       });
     }
@@ -388,7 +536,11 @@ function App() {
                   croppedImageUrl: data.croppedImageUrl,
                   regions: data.regions,
                   fullText: data.fullText,
-                  suggestions: data.suggestions
+                  suggestions: data.suggestions,
+                  method: data.method,
+                  aiReasoning: data.aiReasoning,
+                  timing: data.timing,
+                  localEvidencePurged: false
                 }
               : item
           )
@@ -408,6 +560,11 @@ function App() {
               stages: nextStages,
               scanner: {
                 ...(prev.scanner || {}),
+                ocr: {
+                  ...(prev.scanner?.ocr || {}),
+                  status: "complete",
+                  documentsAttempted: (prev.scanner?.ocr?.documentsAttempted || 0) + 1
+                },
                 timing: data.timing || prev.scanner?.timing || { targetMs: 180000 }
               }
             };
@@ -446,7 +603,13 @@ function App() {
       const response = await fetch("/api/scan-image/refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: image.croppedBase64 || image.originalBase64, region }),
+        body: JSON.stringify({
+          image: image.croppedBase64 || image.originalBase64,
+          region,
+          filename: image.name,
+          findingId: region.findingId,
+          croppedImageUrl: image.croppedImageUrl,
+        }),
       });
 
       if (!response.ok) {
@@ -455,6 +618,7 @@ function App() {
       }
 
       const refined = await response.json();
+      const targetFindingId = refined.findingId || region.findingId;
 
       setScannedImages((prev) =>
         prev.map((item) => {
@@ -465,8 +629,13 @@ function App() {
               r.label === region.label
                 ? {
                     ...r,
+                    findingId: targetFindingId,
                     text: refined.text,
-                    accessibility_notes: refined.accessibility_notes
+                    accessibility_notes: refined.accessibility_notes,
+                    type: refined.type || r.type,
+                    method: refined.method,
+                    aiReasoning: refined.aiReasoning,
+                    findingPatch: refined.findingPatch,
                   }
                 : r
             )
@@ -474,25 +643,36 @@ function App() {
         })
       );
 
-      setAuditRun((prev) => {
-        const findingId = `DOC-${image.id.split("-")[2].slice(0, 4)}-${region.label}`;
-        const nextFindings = prev.findings.map((finding) => {
-          if (finding.id !== findingId) return finding;
-          return {
-            ...finding,
-            title: `${refined.type} layout concern (Refined)`,
-            impact: refined.accessibility_notes,
-            fix: `Refined Fix: ${refined.fix}. Extracted text: "${refined.text}"`,
-            ticket: `Title: Fix refined layout issue in ${refined.type}\nDescription: ${refined.accessibility_notes}\nWCAG: WCAG 2.1 1.1.1\nComponent: Document Scan`
+      const matchesTargetFinding = (finding) =>
+        finding.id === targetFindingId ||
+        (finding.url === image.croppedImageUrl && finding.issueBoxes?.some((box) => String(box.label) === String(region.label)));
+      const applyFindingPatch = (finding) => (matchesTargetFinding(finding) ? { ...finding, ...(refined.findingPatch || {}) } : finding);
+      let nextRunToPersist;
+      await new Promise((resolve) => {
+        setAuditRun((prev) => {
+          const nextFindings = prev.findings.map(applyFindingPatch);
+          const nextRun = {
+            ...prev,
+            findings: nextFindings,
+            stages: buildStagesFromPagesAndFindings(prev.pages || [], prev.documents || [], nextFindings),
           };
+          nextRunToPersist = nextRun;
+          resolve(nextRun);
+          return nextRun;
         });
-        return {
-          ...prev,
-          findings: nextFindings
-        };
       });
 
-      setNotice(`Region ${region.label} refined successfully.`);
+      documentScanRef.current = {
+        ...documentScanRef.current,
+        findings: documentScanRef.current.findings.map(applyFindingPatch),
+      };
+      if (targetFindingId) setSelectedIssueId(targetFindingId);
+      if (nextRunToPersist?.status === "report-ready") {
+        await persistDocumentAuditRun(nextRunToPersist);
+        setNotice(`Region ${region.label} refined and export package regenerated.`);
+      } else {
+        setNotice(`Region ${region.label} refined successfully.`);
+      }
     } catch (error) {
       console.error("Refine region error:", error);
       setNotice(`Failed to refine: ${error.message}`);
@@ -701,12 +881,15 @@ function App() {
   }
 
   function moveIssue(delta) {
-    if (!canNavigateIssues) {
-      setNotice("Select a finding from the issue queue first.");
+    const target = delta < 0 ? issueFlow.previousIssue : issueFlow.nextIssue;
+    if (!target) {
+      setNotice(delta < 0 ? "This is the first finding in the current issue flow." : "This is the last finding in the current issue flow.");
       return;
     }
-    const nextIndex = Math.min(Math.max(selectedIssueIndex + delta, 0), visibleIssues.length - 1);
-    setSelectedIssueId(visibleIssues[nextIndex].id);
+    setSelectedIssueId(target.id);
+    if (selectedStage !== "all" && target.stage !== selectedStage) {
+      setSelectedStage(target.stage);
+    }
   }
 
   function handleListen() {
@@ -763,6 +946,7 @@ function App() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Artifact purge failed.");
       setAuditRun(payload.auditRun);
+      setScannedImages((prev) => prev.map((image) => ({ ...image, localEvidencePurged: true, croppedImageUrl: "" })));
       setNotice(`Purged ${payload.removed} local artifact${payload.removed === 1 ? "" : "s"} from this audit.`);
       await refreshHistory();
     } catch (error) {
@@ -770,8 +954,8 @@ function App() {
     }
   }
 
-  const modeLabel = isDemoAudit ? "Demo audit" : backendMode === "offline" ? "Backend offline" : backendMode === "failed" ? "Scan failed" : backendMode === "empty" ? "Empty audit" : "Live audit";
-  const titleText = isDemoAudit ? "City of Example - Business License Registration Audit" : auditRun.id && auditRun.id !== "empty-audit" ? `Audit ${auditRun.id}` : "New civic flow audit";
+  const modeLabel = isDemoAudit ? "Demo case" : backendMode === "offline" ? "Backend offline" : backendMode === "failed" ? "Scan failed" : backendMode === "empty" ? "Empty case" : "Live case";
+  const titleText = isDemoAudit ? "City of Example - Business License Audit Case" : auditRun.id && auditRun.id !== "empty-audit" ? `Audit case ${auditRun.id}` : "New audit case";
 
   return (
     <main className="app-shell">
@@ -780,7 +964,7 @@ function App() {
           <AppLogo />
           <div>
             <p>Civic Flow Auditor</p>
-            <span>AI accessibility audit assistant</span>
+            <span>Audit case workbench</span>
           </div>
         </div>
         <div className="audit-title">
@@ -808,7 +992,7 @@ function App() {
           </button>
           <button className="secondary-button" type="button" onClick={() => exportReport("HTML")}>
             <Download size={18} />
-            Export
+            Export package
           </button>
         </div>
       </header>
@@ -824,7 +1008,7 @@ function App() {
               disabled={isRunning || isScanningImage}
             >
               <Globe2 size={18} />
-              Website Audit
+              Website intake
             </button>
             <button
               className={`tab-button ${activeTab === "document" ? "active" : ""}`}
@@ -837,7 +1021,7 @@ function App() {
               disabled={isRunning || isScanningImage}
             >
               <FileSearch size={18} />
-              Document Scan
+              Document intake
               <span className="nvidia-badge-inline">NVIDIA Nemotron</span>
             </button>
           </div>
@@ -846,7 +1030,7 @@ function App() {
             <>
               <div className="numbered-heading">
                 <span>1</span>
-                <h2>Enter public website URL</h2>
+                <h2>Add the public website to this case</h2>
               </div>
               <label className="url-field">
                 <Globe2 size={19} />
@@ -855,7 +1039,7 @@ function App() {
 
               <div className="numbered-heading">
                 <span>2</span>
-                <h2>Choose scan depth</h2>
+                <h2>Choose website scan depth</h2>
               </div>
               <div className="depth-options" role="group" aria-label="Scan depth">
                 {scanDepths.map((depth) => (
@@ -890,7 +1074,7 @@ function App() {
             <div className="document-scan-panel">
               <div className="numbered-heading">
                 <span>1</span>
-                <h2>Upload scanned forms or notices</h2>
+                <h2>Add scanned forms or notices to this case</h2>
               </div>
               
               <div
@@ -987,7 +1171,12 @@ function App() {
                           </div>
                           <div className="power-tag">
                             <span className="power-dot" />
-                            <span>Powered by NVIDIA Nemotron-3 Nano Omni</span>
+                            <span>{activeImage.method === "tesseract" ? "Tesseract fallback used" : "NVIDIA Nemotron-3 Nano Omni vision"}</span>
+                          </div>
+                          <div className="scan-status-row" aria-label="Document scan status">
+                            <span>{aiStatusLabel(activeImage.aiReasoning?.status)}</span>
+                            <span>{typeof activeImage.timing?.durationMs === "number" ? formatDuration(activeImage.timing.durationMs) : "Timing pending"}</span>
+                            <span>{activeImage.localEvidencePurged ? "Evidence purged" : activeImage.croppedImageUrl ? "Evidence stored locally" : "Evidence pending"}</span>
                           </div>
                         </div>
 
@@ -1017,6 +1206,11 @@ function App() {
                                   <div className="region-body">
                                     <p><strong>Extracted Text:</strong> "{region.text || "No readable text"}"</p>
                                     <p className="region-notes"><strong>WCAG Concern:</strong> {region.accessibility_notes}</p>
+                                    {region.findingPatch ? (
+                                      <p className="region-notes">
+                                        <strong>Refined finding:</strong> {region.findingPatch.severity} | {region.findingPatch.guideline}
+                                      </p>
+                                    ) : null}
                                   </div>
                                 </div>
                               ))}
@@ -1047,16 +1241,25 @@ function App() {
         <AuditHistoryPanel history={history} loadHistoryAudit={loadHistoryAudit} refreshHistory={refreshHistory} compact />
       </section>
 
+      <section className="case-status-strip" aria-label="Audit case status">
+        {caseStatusChips.map((chip) => (
+          <div className={`case-status-chip ${chip.tone}`} key={`${chip.label}-${chip.value}`}>
+            <small>{chip.label}</small>
+            <strong>{chip.value}</strong>
+          </div>
+        ))}
+      </section>
+
       <section className="metrics-band" aria-label="Scan progress">
         <div>
           <Globe2 size={24} />
-          <strong>{pagesScanned} of {Math.max(auditRun.pages.length, pagesScanned)}</strong>
+          <strong>{pagesScanned} of {Math.max(casePages.length, pagesScanned)}</strong>
           <span>Pages scanned</span>
         </div>
         <div>
           <FileText size={24} />
           <strong>{auditRun.documents.length}</strong>
-          <span>Documents found</span>
+          <span>Documents in case</span>
         </div>
         <div>
           <GitBranch size={24} />
@@ -1066,7 +1269,7 @@ function App() {
         <div>
           <ListChecks size={24} />
           <strong>{findings.length}</strong>
-          <span>Findings</span>
+          <span>Case findings</span>
         </div>
         <div className="progress-cell">
           <span className={isRunning ? "live-dot" : "pause-dot"} aria-hidden="true" />
@@ -1081,7 +1284,7 @@ function App() {
         <div className="panel-title-row compact">
           <div className="numbered-heading">
             <span>3</span>
-            <h2 id="journey-heading">Journey map, user task flow</h2>
+            <h2 id="journey-heading">Audit case journey map</h2>
           </div>
           <div className="legend">
             <span><i className="legend-critical" /> Critical</span>
@@ -1103,7 +1306,7 @@ function App() {
             >
               <span className="stage-number">{index + 1}</span>
               <strong>{stage.name}</strong>
-              <small>{stage.pages} {stage.pages === 1 ? "page" : "pages"}</small>
+              <small>{stageResourceLabel(stage)}</small>
               <span className="stage-severity">
                 <SeverityMark type="critical" value={stage.critical} />
                 <SeverityMark type="serious" value={stage.serious} />
@@ -1120,7 +1323,7 @@ function App() {
           <div className="panel-title-row compact">
             <div className="numbered-heading">
               <span>4</span>
-              <h2>Issue queue, grouped by journey stage</h2>
+              <h2>Top blockers and issue queue</h2>
             </div>
             <select aria-label="Filter issues by stage" value={selectedStage} onChange={(event) => setSelectedStage(event.target.value)}>
               {stages.map((stage) => (
@@ -1128,6 +1331,32 @@ function App() {
               ))}
               <option value="all">All stages</option>
             </select>
+          </div>
+          <div className={`top-blocker-card ${topBlockerSummary.hasBlockers ? "" : "empty"}`}>
+            <div>
+              <span className="eyebrow">Top blockers</span>
+              <strong>{topBlockerSummary.summary}</strong>
+              <p>{topBlockerSummary.recommendedNextAction}</p>
+            </div>
+            <div className="top-blocker-meta">
+              <span>{topBlockerSummary.affectedStageLabel}</span>
+              <span>{topBlockerSummary.criticalCount} critical</span>
+              <span>{topBlockerSummary.highCount} high</span>
+              {topBlockerSummary.topFinding?.occurrenceCount > 1 ? <span>{topBlockerSummary.topFinding.occurrenceCount} selectors</span> : null}
+            </div>
+            <button
+              className="text-button"
+              type="button"
+              disabled={!topBlockerSummary.topFinding}
+              onClick={() => {
+                if (!topBlockerSummary.topFinding) return;
+                setSelectedStage(topBlockerSummary.topFinding.stage);
+                setSelectedIssueId(topBlockerSummary.topFinding.id);
+              }}
+            >
+              Review evidence
+              <ArrowRight size={15} />
+            </button>
           </div>
           <div className="issue-table" role="table" aria-label="Issue queue">
             <div className="table-row table-head" role="row">
@@ -1148,7 +1377,12 @@ function App() {
                 >
                   <span>{issue.stageLabel}</span>
                   <strong>{issue.title}</strong>
-                  <span><SeverityMark type={issue.severity === "High" ? "serious" : issue.severity === "Critical" ? "critical" : "minor"} value="1" /></span>
+                  <span>
+                    <SeverityMark
+                      type={issue.severity === "High" ? "serious" : issue.severity === "Critical" ? "critical" : "minor"}
+                      value={issue.occurrenceCount || 1}
+                    />
+                  </span>
                   <span>{issue.guideline}</span>
                   <span className={issue.status === "In progress" ? "status-pill active" : "status-pill"}>{issue.status}</span>
                 </button>
@@ -1175,14 +1409,14 @@ function App() {
           <div className="panel-title-row compact">
             <div className="numbered-heading">
               <span>5</span>
-              <h2 id="evidence-heading">Evidence and fix details</h2>
+              <h2 id="evidence-heading">Evidence and ticket detail</h2>
             </div>
             <div className="issue-nav">
-              <button className="nav-button" type="button" onClick={() => moveIssue(-1)} disabled={!canNavigateIssues || selectedIssueIndex === 0}>
+              <button className="nav-button" type="button" onClick={() => moveIssue(-1)} disabled={!issueFlow.previousIssue}>
                 <ArrowLeft size={16} />
                 Previous
               </button>
-              <button className="nav-button" type="button" onClick={() => moveIssue(1)} disabled={!canNavigateIssues || selectedIssueIndex === visibleIssues.length - 1}>
+              <button className="nav-button" type="button" onClick={() => moveIssue(1)} disabled={!issueFlow.nextIssue}>
                 Next
                 <ArrowRight size={16} />
               </button>
@@ -1216,6 +1450,15 @@ function App() {
                       <dd>{selectedIssue.guideline}</dd>
                     </div>
                   </dl>
+                  {selectedIssue.occurrenceCount > 1 ? (
+                    <section>
+                      <h4>Grouped evidence</h4>
+                      <p>
+                        {selectedIssue.occurrenceCount} affected selector{selectedIssue.occurrenceCount === 1 ? "" : "s"} are grouped into this one finding.
+                        {selectedIssue.relatedSelectors?.length ? ` First selector: ${selectedIssue.relatedSelectors[0]}.` : ""}
+                      </p>
+                    </section>
+                  ) : null}
                   {selectedGuidelineRefs.length ? (
                     <section>
                       <h4>Rule sources</h4>
@@ -1276,13 +1519,16 @@ function App() {
         </aside>
       </section>
 
-      <section className="report-actions" aria-label="Report and safety actions">
-        <div className="notice-banner">
-          <TriangleAlert size={21} />
-          <p>
-            Automated testing cannot detect all accessibility issues. This is assistance, not legal certification.
-            The agent will not submit forms automatically.
-          </p>
+      <section className="report-actions export-package-panel" aria-label="Export package and safety actions">
+        <div className="export-package-head">
+          <div>
+            <span className="eyebrow">Export package</span>
+            <h2>Final handoff readiness</h2>
+            <p>HTML, PDF, and developer tickets are the agency handoff for this audit case.</p>
+          </div>
+          <span className={`readiness-pill ${reportReady && reviewConfirmed ? "ready" : "review"}`}>
+            {reportReady && reviewConfirmed ? "Ready for handoff" : reportReady ? "Review required" : "Waiting for report"}
+          </span>
         </div>
         <label className="final-review">
           <input
@@ -1296,7 +1542,40 @@ function App() {
             <small>Human review is still required; suggested values are drafts; the agent has not submitted any public forms.</small>
           </span>
         </label>
-        <div className="report-buttons">
+        <div className="export-readiness-grid">
+          {exportPackageItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={`export-card ${item.ready ? "generated" : "missing"} ${reviewConfirmed ? "reviewed" : ""}`}
+                type="button"
+                key={item.type}
+                onClick={() => exportReport(item.type)}
+              >
+                <Icon size={20} />
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.status}</small>
+                </span>
+              </button>
+            );
+          })}
+          <button className="export-card privacy" type="button" onClick={purgeArtifacts} disabled={!auditRun.id || auditRun.id === "empty-audit" || auditRun.id === "pending"}>
+            <Trash2 size={20} />
+            <span>
+              <strong>Local evidence</strong>
+              <small>{localEvidencePurged ? "Purged" : localEvidenceStored ? "Stored until purge" : "Nothing stored"}</small>
+            </span>
+          </button>
+        </div>
+        <div className="notice-banner">
+          <TriangleAlert size={21} />
+          <p>
+            Automated testing cannot detect all accessibility issues. This is assistance, not legal certification.
+            The agent will not submit forms automatically.
+          </p>
+        </div>
+        <div className="report-buttons utility-buttons">
           <button className="secondary-button" type="button" onClick={handleListen}>
             <Headphones size={18} />
             Read top issue
@@ -1304,22 +1583,6 @@ function App() {
           <button className="secondary-button" type="button" onClick={enhanceCurrentAudit} disabled={isRunning || backendMode === "demo" || !findings.length}>
             <Workflow size={18} />
             Enhance with AI
-          </button>
-          <button className="secondary-button" type="button" onClick={() => exportReport("HTML")}>
-            <BookOpenCheck size={18} />
-            Export HTML
-          </button>
-          <button className="secondary-button" type="button" onClick={() => exportReport("PDF")}>
-            <Download size={18} />
-            Export PDF
-          </button>
-          <button className="secondary-button" type="button" onClick={() => exportReport("Tickets")}>
-            <FileText size={18} />
-            Export tickets
-          </button>
-          <button className="secondary-button" type="button" onClick={purgeArtifacts} disabled={!auditRun.id || auditRun.id === "empty-audit" || auditRun.id === "pending"}>
-            <Trash2 size={18} />
-            Purge artifacts
           </button>
         </div>
       </section>

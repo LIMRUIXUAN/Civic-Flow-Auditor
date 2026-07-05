@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import {
+  buildTicket,
   createFinding,
   documentRegionFindingDefaults,
   guidelineRefsFor,
@@ -159,5 +160,67 @@ export async function buildDocumentScanFindings({
       status: ai.status,
       error: ai.error,
     },
+  };
+}
+
+export async function buildRefinedDocumentFindingPatch({
+  region = {},
+  refinedResult = {},
+  filename = "Scanned document",
+  findingId,
+  croppedImageUrl,
+  croppedImagePath,
+  fetchImpl = fetch,
+} = {}) {
+  const refinedRegion = {
+    ...region,
+    label: region.label || "1",
+    type: refinedResult.type || region.type || "Body Text",
+    text: refinedResult.extracted_text || refinedResult.text || region.text || "",
+    accessibility_notes:
+      refinedResult.detailed_accessibility_evaluation ||
+      refinedResult.accessibility_notes ||
+      region.accessibility_notes ||
+      "Requires manual inspection.",
+  };
+
+  const { findings, aiReasoning } = await buildDocumentScanFindings({
+    regions: [refinedRegion],
+    croppedImageUrl,
+    croppedImagePath,
+    filename,
+    fetchImpl,
+  });
+
+  const finding = findings[0];
+  const deterministicFix = clipped(refinedResult.remediation_fix || finding.fix, 900);
+  const fix = aiReasoning.status === "enhanced" ? finding.fix : deterministicFix;
+  const ticket = buildTicket({
+    title: finding.title,
+    description: `${finding.title}${croppedImageUrl ? ` on ${croppedImageUrl}` : ""}. ${finding.impact}`,
+    guideline: finding.guideline,
+    severity: finding.severity,
+    component: "Document Scan",
+  });
+
+  return {
+    findingId: findingId || finding.id,
+    region: refinedRegion,
+    findingPatch: {
+      title: finding.title,
+      severity: finding.severity,
+      guideline: finding.guideline,
+      impact: finding.impact,
+      fix,
+      ticket,
+      selector: `${filename} region ${refinedRegion.label}`,
+      sourceSnippet: refinedRegion.text,
+      issueBoxes: finding.issueBoxes,
+      rule: finding.rule,
+      guidelineRefs: finding.guidelineRefs,
+      humanReviewNote: finding.humanReviewNote,
+      matchedStageReason: "Refined from the selected scanned-document region in the audit case.",
+    },
+    aiReasoning,
   };
 }
