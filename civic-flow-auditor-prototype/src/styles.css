@@ -463,9 +463,9 @@ h4 {
 
 .intake-history-section .history-list {
   grid-template-columns: 1fr;
-  max-height: 350px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
   padding-right: 2px;
   scrollbar-gutter: stable;
 }
@@ -965,7 +965,7 @@ h4 {
 }
 
 .table-head {
-  background: rgba(242, 246, 251, 0.76);
+  background: #f2f6fb;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
@@ -1159,13 +1159,14 @@ h4 {
 }
 
 .evidence-lightbox {
-  align-items: center;
+  align-items: flex-start;
   background: rgba(8, 14, 26, 0.74);
   backdrop-filter: blur(10px);
   display: flex;
   inset: 0;
   justify-content: center;
-  padding: 24px;
+  overflow: hidden;
+  padding: 72px 24px 20px;
   position: fixed;
   z-index: 80;
 }
@@ -1177,8 +1178,8 @@ h4 {
   box-shadow: 0 28px 80px rgba(8, 14, 26, 0.42);
   display: grid;
   gap: 14px;
-  max-height: calc(100vh - 48px);
-  max-width: min(1180px, calc(100vw - 48px));
+  max-height: calc(100vh - 92px);
+  max-width: min(1040px, calc(100vw - 48px));
   overflow: hidden;
   padding: 16px;
   width: 100%;
@@ -1233,16 +1234,17 @@ h4 {
   border-radius: 14px;
   display: flex;
   justify-content: flex-start;
-  max-height: calc(100vh - 178px);
+  height: clamp(360px, 60vh, 620px);
+  max-height: calc(100vh - 210px);
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .evidence-lightbox-image-wrap img {
   display: block;
-  height: auto;
-  max-width: none;
-  object-fit: contain;
+  height: 100%;
+  max-width: 100%;
+  object-fit: cover;
   width: 100%;
 }
 
@@ -1681,7 +1683,7 @@ h4 {
   }
 
   .evidence-lightbox {
-    padding: 10px;
+    padding: 64px 10px 10px;
   }
 
   .evidence-lightbox-panel {
@@ -1700,11 +1702,12 @@ h4 {
   }
 
   .evidence-lightbox-image-wrap {
-    max-height: calc(100vh - 150px);
+    height: min(56vh, 430px);
+    max-height: calc(100vh - 156px);
   }
 
   .evidence-lightbox-image-wrap img {
-    width: max(100%, 680px);
+    width: 100%;
   }
 
   .setup-panel,

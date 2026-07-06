@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowRight,
@@ -203,9 +204,9 @@ function EvidenceImage({ issue }) {
         <button
           className="evidence-image-button"
           type="button"
-          aria-label={`Open full screenshot evidence for ${issue.id}`}
+          aria-label={`Open focused screenshot evidence for ${issue.id}`}
           aria-haspopup="dialog"
-          title="Open full screenshot"
+          title="Open focused screenshot"
           onClick={() => setIsInspecting(true)}
         >
           <img
@@ -220,7 +221,7 @@ function EvidenceImage({ issue }) {
           </span>
         </button>
       </div>
-      {isInspecting ? (
+      {isInspecting && typeof document !== "undefined" ? createPortal(
         <div className="evidence-lightbox" role="dialog" aria-modal="true" aria-labelledby="evidence-lightbox-title" onClick={() => setIsInspecting(false)}>
           <div className="evidence-lightbox-panel" onClick={(event) => event.stopPropagation()}>
             <header>
@@ -228,15 +229,21 @@ function EvidenceImage({ issue }) {
                 <span className={`finding-badge ${issue.severity.toLowerCase()}`}>{issue.severity}</span>
                 <h3 id="evidence-lightbox-title">{issue.title}</h3>
               </div>
-              <button className="icon-button" type="button" aria-label="Close full screenshot" onClick={() => setIsInspecting(false)}>
+              <button className="icon-button" type="button" aria-label="Close focused screenshot" onClick={() => setIsInspecting(false)}>
                 <X size={20} />
               </button>
             </header>
-            <div className="evidence-lightbox-image-wrap">
-              <img src={issue.screenshotUrl} alt={`Full annotated screenshot evidence for ${issue.id}`} />
+            <div className="evidence-lightbox-image-wrap focused-crop">
+              <img
+                src={issue.screenshotUrl}
+                alt={`Focused annotated screenshot evidence for ${issue.id}`}
+                style={focusStyle}
+                onLoad={(event) => setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+              />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </>
   );
