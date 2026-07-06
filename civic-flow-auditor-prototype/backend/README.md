@@ -11,7 +11,7 @@ Production-foundation backend for the PRD refactor. This service is designed to 
 - PostgreSQL audit persistence
 - Local artifact storage for development
 
-## Local commands
+## Prerequisite: install Python 3.11+ and make sure `python --version` works in PowerShell. Then run these local commands
 
 ```bash
 pip install -r requirements.txt

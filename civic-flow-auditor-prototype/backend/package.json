@@ -1,0 +1,10 @@
+{
+  "name": "civic-flow-auditor-python-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:api": "node scripts/run-python-backend.mjs dev",
+    "worker": "node scripts/run-python-backend.mjs worker",
+    "test": "node scripts/run-python-backend.mjs test"
+  }
+}

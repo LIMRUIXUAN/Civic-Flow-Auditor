@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { civicFlowAuditWorkflow } from "./genkit-orchestrator.js";
+import { runCivicFlowAudit } from "./audit-engine.js";
 import { loadAuditRun, saveAuditRun, updateAuditRun } from "./store.js";
 
 const queue = [];
@@ -25,13 +25,12 @@ function pumpQueue() {
 
 async function runJob(job) {
   try {
-    await civicFlowAuditWorkflow({
+    await runCivicFlowAudit({
       id: job.id,
       url: job.url,
       depth: job.depth,
-      // AbortController logic could be integrated here later if added to input schema
-    }, {
-      onChunk: saveAuditRun
+      signal: job.controller.signal,
+      onUpdate: saveAuditRun,
     });
   } catch (error) {
     const current = await loadAuditRun(job.id).catch(() => null);
