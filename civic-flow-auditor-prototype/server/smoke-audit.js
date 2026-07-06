@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import { nanoid } from "nanoid";
-import { runCivicFlowAudit } from "./audit-engine.js";
+import { civicFlowAuditWorkflow } from "./genkit-orchestrator.js";
 import { validateScanTarget } from "./security.js";
 import { saveAuditRun } from "./store.js";
 
@@ -14,11 +14,12 @@ try {
   process.exit(1);
 }
 
-const run = await runCivicFlowAudit({
+const run = await civicFlowAuditWorkflow({
   id: `smoke-${nanoid(6)}`,
   url: safeUrl,
   depth: "quick",
-  onUpdate: saveAuditRun,
+}, {
+  onChunk: saveAuditRun
 });
 
 if (run.status !== "report-ready") {

@@ -18,6 +18,9 @@
   },
   "dependencies": {
     "@axe-core/playwright": "^4.12.1",
+    "@genkit-ai/core": "^1.39.0",
+    "@genkit-ai/dotprompt": "^0.9.12",
+    "@genkit-ai/googleai": "^1.28.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vitejs/plugin-react": "5.0.4",
     "better-sqlite3": "^12.11.1",

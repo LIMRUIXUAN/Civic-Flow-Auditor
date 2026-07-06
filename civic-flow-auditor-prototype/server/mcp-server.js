@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { nanoid } from "nanoid";
 import * as z from "zod/v4";
 import { normalizeDepth } from "../shared/audit-utils.js";
-import { annotateScreenshot, crawlSite, generateReportArtifact, mapJourney, parseDocument, runCivicFlowAudit, scanAccessibility } from "./audit-engine.js";
+import { annotateScreenshot, crawlSite, generateReportArtifact, mapJourney, parseDocument, scanAccessibility } from "./audit-engine.js";
 import { validateScanTarget } from "./security.js";
 import fs from "node:fs/promises";
 import { loadAuditRun, saveAuditRun, listAuditIds, ensureRunDir, getArtifactPath } from "./store.js";
@@ -146,28 +146,7 @@ export function createCivicFlowMcpServer() {
     async (input) => asToolResult(await generateReportArtifact({ auditRun: input.auditRun })),
   );
 
-  server.registerTool(
-    "run_civic_flow_audit",
-    {
-      title: "Run full civic flow audit",
-      description: "Run intake, discovery, journey mapping, accessibility scan, PDF review, evidence annotation, and report export.",
-      inputSchema: {
-        url: z.string(),
-        depth: z.enum(["quick", "standard", "form"]).default("standard"),
-      },
-    },
-    async ({ url, depth }) => {
-      const safeUrl = await validateScanTarget(url);
-      const id = `mcp-${nanoid(8)}`;
-      const run = await runCivicFlowAudit({
-        id,
-        url: safeUrl,
-        depth: normalizeDepth(depth),
-        onUpdate: saveAuditRun,
-      });
-      return asToolResult(run);
-    },
-  );
+
 
   server.registerResource(
     "audit-run",
