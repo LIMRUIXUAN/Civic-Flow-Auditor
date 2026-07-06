@@ -92,6 +92,24 @@ When connected via MCP, the server provides the following tools:
 - `generate_report`: Generate HTML/PDF report artifacts.
 - `run_civic_flow_audit`: Run a full, end-to-end civic flow audit.
 
+
+## Python Backend Foundation
+
+A production-foundation backend has been added under `backend/` to match the PRD refactor target: FastAPI, Google ADK Python tool wrappers, Celery task boundaries, Redis-compatible events, SQLAlchemy persistence, and local artifact storage.
+
+Local development commands:
+
+```bash
+cd backend
+pip install -r requirements.txt
+python -m playwright install chromium
+uvicorn app.main:app --host 127.0.0.1 --port 8787
+celery -A app.worker.celery_app worker --loglevel=info
+pytest
+```
+
+The Python backend preserves the current frontend API routes such as `/api/audits`, `/api/audits/{id}/events`, `/api/scan-image`, `/reports/{id}.html`, and `/artifacts/{id}/{file}`. The existing Node backend remains in place as the prototype reference while parity work continues.
+
 ## License
 
 This project is created as a prototype.
