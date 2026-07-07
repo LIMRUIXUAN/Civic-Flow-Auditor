@@ -36,6 +36,8 @@ def _make_celery():
     app.conf.task_always_eager = settings.use_celery_eager
     app.conf.task_track_started = True
     app.conf.worker_prefetch_multiplier = 1
+    app.conf.broker_connection_timeout = 1
+    app.conf.broker_transport_options = {"socket_timeout": 1, "socket_connect_timeout": 1}
     return app
 
 

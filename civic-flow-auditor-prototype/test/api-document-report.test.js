@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 import { createApiApp, scanDocumentTitle } from "../server/api.js";
+import { config } from "../server/config.js";
 import { artifactUrl, ensureRunDir, getArtifactPath } from "../server/store.js";
 
 const tinyPng = Buffer.from(
@@ -88,4 +89,36 @@ test("document-report generates html pdf and tickets, then purge removes local a
     assert.equal(purge.auditRun.findings[0].screenshotPath, undefined);
     assert.equal(purge.auditRun.documents[0].url, "purged-local-scan-artifact");
   });
+});
+
+test("api edge always returns JSON for API misses and request parse errors", async () => {
+  await withServer(async (baseUrl) => {
+    const missingResponse = await fetch(`${baseUrl}/api/not-a-route`);
+    const missing = await missingResponse.json();
+
+    assert.equal(missingResponse.status, 404);
+    assert.match(missingResponse.headers.get("content-type"), /application\/json/);
+    assert.equal(missing.error, "API route not found.");
+
+    const parseResponse = await fetch(`${baseUrl}/api/audits`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{",
+    });
+    const parsed = await parseResponse.json();
+
+    assert.equal(parseResponse.status, 400);
+    assert.match(parseResponse.headers.get("content-type"), /application\/json/);
+    assert.equal(typeof parsed.error, "string");
+  });
+});
+
+test("production static fallback can be registered under Express 5", () => {
+  const original = config.serveStaticDist;
+  config.serveStaticDist = true;
+  try {
+    assert.doesNotThrow(() => createApiApp());
+  } finally {
+    config.serveStaticDist = original;
+  }
 });

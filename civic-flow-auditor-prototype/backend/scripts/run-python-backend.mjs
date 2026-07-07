@@ -1,6 +1,13 @@
 import { spawnSync } from "node:child_process";
 
 function findPython() {
+  const explicit = process.env.PYTHON_EXE;
+  if (explicit) {
+    const result = spawnSync(explicit, ["--version"], { encoding: "utf8", shell: true });
+    if (result.status === 0) return explicit;
+    console.error(`PYTHON_EXE is set but did not run: ${explicit}`);
+  }
+
   for (const command of ["python", "py"]) {
     const result = spawnSync(command, ["--version"], { encoding: "utf8", shell: true });
     if (result.status === 0) return command;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -9,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from ..artifacts import get_artifact_path, get_run_dir, purge_run_artifacts
+from ..config import settings
 from ..repository import create_stored_audit_run, list_audit_summaries, load_audit_run, save_audit_run, update_audit_run
 from ..schemas import CreateAuditRequest, SaveDocumentAuditRequest, build_deterministic_summary, normalize_depth, now_iso
 from ..security import validate_scan_target
@@ -16,12 +18,55 @@ from ..security import validate_scan_target
 router = APIRouter()
 
 
+def _run_in_process(audit_id: str, reason: str) -> None:
+    update_audit_run(
+        audit_id,
+        {
+            "error": reason,
+        },
+    )
+
+    def run_fallback() -> None:
+        try:
+            from ..agents.orchestrator import run_audit
+
+            run_audit(audit_id)
+        except Exception as fallback_exc:
+            update_audit_run(
+                audit_id,
+                {
+                    "status": "failed",
+                    "progress": 5,
+                    "error": f"Audit failed in fallback worker: {fallback_exc}",
+                },
+            )
+
+    threading.Thread(target=run_fallback, name=f"audit-fallback-{audit_id}", daemon=True).start()
+
+
+def _redis_available() -> bool:
+    try:
+        import redis
+
+        client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=0.5, socket_timeout=0.5)
+        return bool(client.ping())
+    except Exception:
+        return False
+
+
 def _queue_audit(audit_id: str) -> None:
     from ..worker import run_audit_task
 
-    result = run_audit_task.delay(audit_id)
-    if getattr(result, "id", None):
-        update_audit_run(audit_id, {"error": None})
+    if not settings.use_celery_eager and not _redis_available():
+        _run_in_process(audit_id, "Background queue unavailable; running audit in this API process.")
+        return
+
+    try:
+        result = run_audit_task.delay(audit_id)
+        if getattr(result, "id", None):
+            update_audit_run(audit_id, {"error": None})
+    except Exception as exc:
+        _run_in_process(audit_id, f"Background queue unavailable; running audit in this API process. ({exc})")
 
 
 @router.get("/api/health")

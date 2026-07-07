@@ -302,6 +302,21 @@ function aiStatusLabel(status) {
   return "Deterministic reasoning";
 }
 
+async function readApiResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const text = await response.text();
+  if (!text) return {};
+  if (contentType.includes("application/json")) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`Backend returned malformed JSON (${response.status}).`);
+    }
+  }
+  const message = text.replace(/\s+/g, " ").trim().slice(0, 220);
+  throw new Error(message || `Backend returned ${response.status} without JSON.`);
+}
+
 function artifactStatusLabel({ ready, reviewConfirmed, reportReady }) {
   if (!reportReady) return "Waiting for report";
   if (!ready) return "Not generated";
@@ -425,7 +440,7 @@ function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ auditRun: nextRun }),
     });
-    const payload = await response.json();
+    const payload = await readApiResponse(response);
     if (!response.ok) throw new Error(payload.error || "Document report could not be saved.");
     setAuditRun(payload);
     setBackendMode("live");
@@ -514,11 +529,11 @@ function App() {
         });
 
         if (!response.ok) {
-          const errData = await response.json();
+          const errData = await readApiResponse(response);
           throw new Error(errData.error || "Failed to scan image.");
         }
 
-        const data = await response.json();
+        const data = await readApiResponse(response);
         const newFindings = data.findings || [];
         const nextDocumentFromServer = data.document || {
           url: data.croppedImageUrl,
@@ -620,11 +635,11 @@ function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
+        const errData = await readApiResponse(response);
         throw new Error(errData.error || "Failed to refine region.");
       }
 
-      const refined = await response.json();
+      const refined = await readApiResponse(response);
       const targetFindingId = refined.findingId || region.findingId;
 
       setScannedImages((prev) =>
@@ -696,7 +711,7 @@ function App() {
         if (!health.ok) throw new Error("Backend health check failed.");
         const audits = await fetch("/api/audits");
         if (!audits.ok) throw new Error("Audit history could not be loaded.");
-        const rows = await audits.json();
+        const rows = await readApiResponse(audits);
         if (!active) return;
         setBackendStatus("online");
         setHistory(rows);
@@ -738,7 +753,7 @@ function App() {
     try {
       const response = await fetch("/api/audits");
       if (!response.ok) throw new Error("History unavailable.");
-      setHistory(await response.json());
+      setHistory(await readApiResponse(response));
       setBackendStatus("online");
     } catch {
       setBackendStatus("offline");
@@ -801,7 +816,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, depth: scanDepth }),
       });
-      const payload = await response.json();
+      const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.error || "Could not start the audit.");
       setAuditRun(payload);
       subscribeToAudit(payload.id);
@@ -841,7 +856,7 @@ function App() {
     if (!auditRun.id || auditRun.id === "pending") return;
     try {
       const response = await fetch(`/api/audits/${auditRun.id}/cancel`, { method: "POST" });
-      const payload = await response.json();
+      const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.error || "Could not cancel audit.");
       setAuditRun(payload.run);
       setNotice(payload.cancelled ? "Audit cancellation requested." : "Audit was not running.");
@@ -860,7 +875,7 @@ function App() {
     setAuditRun({ ...auditRun, ai: { ...(auditRun.ai || {}), status: "pending" } });
     try {
       const response = await fetch(`/api/audits/${auditRun.id}/enhance`, { method: "POST" });
-      const payload = await response.json();
+      const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.error || "AI enhancement failed.");
       setAuditRun(payload);
       setBackendMode("live");
@@ -875,7 +890,7 @@ function App() {
     eventSourceRef.current?.close();
     try {
       const response = await fetch(`/api/audits/${auditId}`);
-      const payload = await response.json();
+      const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.error || "Audit not found.");
       setAuditRun(payload);
       setUrl(payload.url);
@@ -950,7 +965,7 @@ function App() {
     }
     try {
       const response = await fetch(`/api/audits/${auditRun.id}/purge-artifacts`, { method: "POST" });
-      const payload = await response.json();
+      const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.error || "Artifact purge failed.");
       setAuditRun(payload.auditRun);
       setScannedImages((prev) => prev.map((image) => ({ ...image, localEvidencePurged: true, croppedImageUrl: "" })));

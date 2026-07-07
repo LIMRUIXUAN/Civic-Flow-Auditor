@@ -549,13 +549,30 @@ export function createApiApp() {
     }
   });
 
+  app.use("/api", (_request, response) => {
+    response.status(404).json({ error: "API route not found." });
+  });
+
   if (config.serveStaticDist) {
     const distDir = path.join(projectRoot, "dist");
     app.use(express.static(distDir));
-    app.get("*", async (_request, response) => {
+    app.get(/.*/, async (_request, response) => {
       response.sendFile(path.join(distDir, "index.html"));
     });
   }
+
+  app.use((error, request, response, _next) => {
+    const status = error?.status || error?.statusCode || 500;
+    const message = error instanceof Error ? error.message : String(error || "Internal server error.");
+    if (status >= 500) {
+      console.error(`${request.method} ${request.originalUrl} failed:`, error);
+    }
+    if (response.headersSent) return;
+    response.status(status).json({
+      error: status >= 500 ? "Internal server error." : message,
+      detail: status >= 500 && config.serveStaticDist ? undefined : message,
+    });
+  });
 
   return app;
 }

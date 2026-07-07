@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Text, create_engine, select
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.sql import func
 
 from .config import settings
@@ -42,6 +44,10 @@ def get_engine() -> Engine:
     global _engine
     if _engine is None:
         connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+        if settings.database_url.startswith("sqlite"):
+            database = make_url(settings.database_url).database
+            if database and database != ":memory:":
+                Path(database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
         _engine = create_engine(settings.database_url, future=True, connect_args=connect_args)
         metadata.create_all(_engine)
     return _engine
