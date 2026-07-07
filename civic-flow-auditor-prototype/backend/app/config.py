@@ -4,6 +4,18 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+
+    # Load backend/.env into the process environment. Production deploys
+    # (Render, etc.) inject real env vars directly and don't need this, but
+    # local dev only has a .env file — without loading it here, GOOGLE_API_KEY
+    # silently never reaches os.getenv() below and AI enhancement stays
+    # permanently "unavailable" even with a valid key on disk.
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
+
 
 def _bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)

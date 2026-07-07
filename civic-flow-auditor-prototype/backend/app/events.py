@@ -6,15 +6,26 @@ from typing import AsyncIterator
 
 from .schemas import AuditRun
 
+TERMINAL_STATUSES = {"report-ready", "failed", "cancelled"}
+
 _subscribers: dict[str, set[asyncio.Queue[AuditRun]]] = defaultdict(set)
 _history_subscribers: set[asyncio.Queue[AuditRun]] = set()
 
 
 def publish_audit_update(run: AuditRun) -> None:
+    """Best-effort in-process fan-out. Called from worker threads and Celery
+    processes, so it must never raise (a full queue or a missing event loop in
+    the caller must not break saving an audit run)."""
     for queue in list(_subscribers.get(run.id, set())):
-        queue.put_nowait(run)
+        try:
+            queue.put_nowait(run)
+        except Exception:
+            pass
     for queue in list(_history_subscribers):
-        queue.put_nowait(run)
+        try:
+            queue.put_nowait(run)
+        except Exception:
+            pass
 
 
 async def subscribe_audit(audit_id: str) -> AsyncIterator[AuditRun]:

@@ -1,11 +1,15 @@
 services:
   # Python Google ADK backend (FastAPI). API only — deploy the frontend (Vite
-  # build in ../dist) as a separate Render Static Site pointing /api at this URL.
+  # build in civic-flow-auditor-prototype/dist) as a separate Render Static
+  # Site pointing /api at this service's URL.
+  # NOTE: this file must live at the git repo root — Render's Blueprint scan
+  # (render.com > New > Blueprint) only looks for render.yaml at the repo
+  # root, not in subdirectories.
   - type: web
     name: civic-flow-auditor-api
     runtime: python
     plan: starter
-    rootDir: backend
+    rootDir: civic-flow-auditor-prototype/backend
     buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:

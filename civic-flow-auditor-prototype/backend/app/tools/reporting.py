@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import logging
 from html import escape
 from pathlib import Path
 
-from ..artifacts import write_text_artifact
+from ..artifacts import get_run_dir, write_text_artifact
 from ..schemas import Artifacts, AuditRun, Finding
+
+logger = logging.getLogger(__name__)
 
 
 def _severity_color(severity: str) -> str:
     return {"Critical": "#dc2626", "High": "#ea580c", "Medium": "#d97706", "Low": "#16a34a"}.get(severity, "#6b7280")
 
 
-def _screenshot_html(finding: Finding, base_url: str = "") -> str:
+def _screenshot_html(finding: Finding, base_url: str = "", use_local_paths: bool = False) -> str:
     url = finding.screenshotUrl
+    if use_local_paths and finding.screenshotPath and Path(finding.screenshotPath).exists():
+        # PDF rendering opens the report from file://, so /artifacts URLs would
+        # not resolve; point directly at the screenshot files on disk instead.
+        url = Path(finding.screenshotPath).resolve().as_uri()
     if not url:
         return ""
     full_url = f"{base_url}{url}" if url.startswith("/") else url
@@ -36,6 +43,36 @@ def _missing_items_note(run: AuditRun) -> str:
         return ""
     li = "".join(f"<li>{escape(item)}</li>" for item in items)
     return f'<div class="missing-note"><strong>Items needing manual review:</strong><ul>{li}</ul></div>'
+
+
+def _skipped_and_failed_html(run: AuditRun) -> str:
+    """Explicit partial-results section: anything the audit could not complete
+    is listed here instead of being silently omitted."""
+    rows: list[tuple[str, str, str]] = []
+    for p in run.pages:
+        if p.error:
+            rows.append(("Page scan", p.url, p.error))
+    for d in run.documents:
+        if d.error:
+            rows.append(("Document", d.url, d.error))
+        elif d.imageOnly:
+            rows.append(("Document", d.url, "Image-only PDF; text could not be extracted automatically."))
+    for action in run.skippedActions:
+        rows.append(("Skipped action", action.url or run.url, f"{action.action}: {action.reason}"))
+    if run.ai.status in {"unavailable", "failed"}:
+        rows.append(("AI enhancement", "", run.ai.error or "AI enhancement did not run; deterministic text was kept."))
+    if not rows:
+        return ""
+    body = "".join(
+        f"<tr><td>{escape(kind)}</td><td>{escape(where or '—')}</td><td>{escape(detail)}</td></tr>"
+        for kind, where, detail in rows
+    )
+    return (
+        "<h2>Skipped and Failed Steps</h2>"
+        "<p class=\"meta\">These items could not be completed automatically. The findings above are partial for them and need manual review.</p>"
+        "<table><thead><tr><th>Type</th><th>Where</th><th>Detail</th></tr></thead>"
+        f"<tbody>{body}</tbody></table>"
+    )
 
 
 def _occurrence_badge(finding: Finding) -> str:
@@ -109,14 +146,14 @@ function fallbackCopy(text, done) {
 """
 
 
-def build_report_html(run: AuditRun) -> str:
+def build_report_html(run: AuditRun, use_local_paths: bool = False) -> str:
     severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     sorted_findings = sorted(run.findings, key=lambda f: severity_order.get(f.severity, 9))
 
     finding_sections = []
     for i, f in enumerate(sorted_findings, 1):
         color = _severity_color(f.severity)
-        screenshot = _screenshot_html(f)
+        screenshot = _screenshot_html(f, use_local_paths=use_local_paths)
         badge = _occurrence_badge(f)
         prompt_text = build_ai_fix_prompt(f, run.url)
         prompt_block = (
@@ -169,6 +206,10 @@ def build_report_html(run: AuditRun) -> str:
     medium = sum(1 for f in run.findings if f.severity == "Medium")
     low = sum(1 for f in run.findings if f.severity == "Low")
 
+    stages_covered = list(dict.fromkeys(p.sessionLabel for p in run.pages if p.sessionLabel))
+    pages_scanned = sum(1 for p in run.pages if p.scanned)
+    skipped_section = _skipped_and_failed_html(run)
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -210,6 +251,14 @@ def build_report_html(run: AuditRun) -> str:
   .ai-prompt {{ margin: 0; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: .8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; max-height: 340px; overflow: auto; }}
   footer {{ margin-top: 32px; color: #9ca3af; font-size: .82rem; }}
   @media (max-width:600px) {{ body {{ padding: 12px; }} .container {{ padding: 16px; }} }}
+  @media print {{
+    body {{ background: #fff; padding: 0; }}
+    .container {{ box-shadow: none; padding: 0; max-width: none; }}
+    .finding, .summary-card, table {{ break-inside: avoid; }}
+    .copy-btn {{ display: none; }}
+    .ai-prompt {{ max-height: none; overflow: visible; }}
+    a {{ color: inherit; text-decoration: none; }}
+  }}
 </style>
 </head>
 <body>
@@ -219,8 +268,9 @@ def build_report_html(run: AuditRun) -> str:
     <b>URL:</b> <a href="{escape(run.url)}" target="_blank" rel="noopener">{escape(run.url)}</a><br>
     <b>Status:</b> {escape(run.status)} &nbsp;|&nbsp;
     <b>Depth:</b> {escape(run.depth)} &nbsp;|&nbsp;
-    <b>Pages scanned:</b> {len(run.pages)} &nbsp;|&nbsp;
-    <b>Documents:</b> {len(run.documents)}
+    <b>Pages scanned:</b> {pages_scanned} of {len(run.pages)} &nbsp;|&nbsp;
+    <b>Documents:</b> {len(run.documents)} &nbsp;|&nbsp;
+    <b>Journey coverage:</b> {len(stages_covered)} stage(s){f" — {escape(', '.join(stages_covered[:6]))}" if stages_covered else ""}
   </p>
   <p>{escape(run.executiveSummary or "Deterministic report generated. Manual accessibility review is still recommended.")}</p>
 
@@ -247,6 +297,8 @@ def build_report_html(run: AuditRun) -> str:
     <thead><tr><th>Title</th><th>OCR Status</th><th>Summary</th></tr></thead>
     <tbody>{document_rows or '<tr><td colspan="3">No documents recorded.</td></tr>'}</tbody>
   </table>
+
+  {skipped_section}
 
   <h2>Safety Notes</h2>
   <ul>{safety}</ul>
@@ -284,14 +336,58 @@ def build_ticket_markdown(run: AuditRun) -> str:
     return "\n".join(lines)
 
 
+def _render_pdf(run: AuditRun) -> Path | None:
+    """Best-effort Playwright print-to-PDF. Returns the PDF path on success,
+    None when Playwright/Chromium is unavailable or rendering fails — the HTML
+    report is always the primary artifact."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        logger.warning("PDF export skipped for audit %s: Playwright is not installed (%s)", run.id, exc)
+        return None
+    pdf_path = get_run_dir(run.id) / "report.pdf"
+    # Render from a temporary copy whose screenshots use file:// paths, since
+    # the /artifacts URLs in report.html only resolve through the API server.
+    source_path = get_run_dir(run.id) / "report-pdf-source.html"
+    try:
+        source_path.write_text(build_report_html(run, use_local_paths=True), encoding="utf-8")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(source_path.resolve().as_uri(), wait_until="load", timeout=30000)
+                page.emulate_media(media="print")
+                page.pdf(
+                    path=str(pdf_path),
+                    format="A4",
+                    print_background=True,
+                    margin={"top": "12mm", "bottom": "12mm", "left": "10mm", "right": "10mm"},
+                )
+            finally:
+                browser.close()
+        if pdf_path.exists():
+            return pdf_path
+        logger.warning("PDF export produced no file for audit %s (Chromium exited without error).", run.id)
+        return None
+    except Exception:
+        # Logged with the full traceback (not swallowed) so a Chromium/system-
+        # dependency failure on a deploy target like Render is visible in logs,
+        # while the HTML report remains the unaffected primary artifact.
+        logger.exception("PDF export failed for audit %s; falling back to HTML-only report.", run.id)
+        return None
+    finally:
+        source_path.unlink(missing_ok=True)
+
+
 def generate_report(run: AuditRun) -> Artifacts:
     html_path, html_url = write_text_artifact(run.id, "report.html", build_report_html(run))
     ticket_path, ticket_url = write_text_artifact(run.id, "tickets.md", build_ticket_markdown(run))
+    pdf_path = _render_pdf(run)
     return Artifacts(
         htmlReportPath=str(html_path),
         htmlReportUrl=f"/reports/{run.id}.html",
-        pdfReportPath=None,
-        pdfReportUrl=None,
+        pdfReportPath=str(pdf_path) if pdf_path else None,
+        pdfReportUrl=f"/reports/{run.id}.pdf" if pdf_path else None,
         ticketReportPath=str(ticket_path),
         ticketReportUrl=ticket_url,
         screenshots=list(dict.fromkeys(

@@ -41,6 +41,29 @@ def _set_step(run: AuditRun, name: str, status: str, detail: str) -> None:
 _SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 
 
+def _cancel_requested(run: AuditRun) -> bool:
+    """Re-read the stored status. Cancellation is written by the API process,
+    so the in-memory copy held by this worker never sees it on its own."""
+    if run.status == "cancelled":
+        return True
+    try:
+        stored = load_audit_run(run.id)
+    except KeyError:
+        return False
+    if stored.status == "cancelled":
+        run.status = "cancelled"
+        run.error = stored.error or "Audit cancelled by the user."
+        return True
+    return False
+
+
+def _fail_run(run: AuditRun, step: str, detail: str, error: str) -> AuditRun:
+    run.status = "failed"
+    run.error = error[:300]
+    _set_step(run, step, "failed", detail)
+    return save_audit_run(run)
+
+
 def _deduplicate_findings(findings: list[Finding]) -> list[Finding]:
     """
     Group findings by (rule, stage). Within each group keep one representative
@@ -94,17 +117,31 @@ def run_audit(
     _set_step(run, "Discovery", "running", "Crawling public pages and linked PDFs.")
     save_audit_run(run)
 
-    crawl = crawl_site(
-        run.url,
-        audit_id=run.id,
-        login_email=login_email,
-        login_password=login_password,
-    )
+    try:
+        crawl = crawl_site(
+            run.url,
+            audit_id=run.id,
+            login_email=login_email,
+            login_password=login_password,
+        )
+    except Exception as exc:
+        return _fail_run(run, "Discovery", "Crawl could not complete.", f"Crawl failed: {exc}")
+    if _cancel_requested(run):
+        return save_audit_run(run)
+
     run.pages = [PageSnapshot.model_validate(page) for page in crawl.get("pages", [])]
-    run.documents = [
-        DocumentSnapshot.model_validate(parse_document(doc.get("url", ""), doc.get("sourcePageUrl")))
-        for doc in crawl.get("documents", [])
-    ]
+    run.documents = []
+    failed_documents = 0
+    for doc in crawl.get("documents", []):
+        try:
+            run.documents.append(
+                DocumentSnapshot.model_validate(parse_document(doc.get("url", ""), doc.get("sourcePageUrl")))
+            )
+        except Exception as exc:
+            failed_documents += 1
+            run.documents.append(
+                DocumentSnapshot(url=doc.get("url", ""), title=doc.get("url", "Document"), error=str(exc)[:200])
+            )
     run.skippedActions = crawl.get("skippedActions", [])
     for note in crawl.get("loginNotes", []):
         if note:
@@ -118,18 +155,44 @@ def run_audit(
     save_audit_run(run)
 
     raw_findings: list[Finding] = []
+    failed_pages = 0
     for page in run.pages:
-        if run.status == "cancelled":
+        if _cancel_requested(run):
             return save_audit_run(run)
-        scan = scan_accessibility(page, audit_id=run.id)
-        raw_findings.extend(Finding.model_validate(f) for f in scan.get("findings", []))
-        # Preserve screenshot paths from the accessibility scan back into the page
-        if scan.get("screenshotPath") and not page.screenshotPath:
-            page.screenshotPath = scan["screenshotPath"]
-            page.screenshotUrl = scan.get("screenshotUrl")
-        page.scanned = True
+        scan = None
+        scan_error: str | None = None
+        for attempt in (1, 2):  # one retry per page before recording a partial result
+            try:
+                scan = scan_accessibility(page, audit_id=run.id)
+            except Exception as exc:  # infra-level failure (e.g. Playwright crash)
+                scan_error = f"Accessibility scan failed: {exc}"[:200]
+                continue
+            # scan_accessibility does not raise on navigation failure; it reports
+            # the error in the result so partial evidence (a screenshot) survives.
+            scan_error = f"Accessibility scan failed: {scan['error']}"[:200] if scan.get("error") else None
+            if scan_error is None:
+                break
+        if scan is not None:
+            raw_findings.extend(Finding.model_validate(f) for f in scan.get("findings", []))
+            # Preserve screenshot paths from the accessibility scan back into the page
+            if scan.get("screenshotPath") and not page.screenshotPath:
+                page.screenshotPath = scan["screenshotPath"]
+                page.screenshotUrl = scan.get("screenshotUrl")
+            page.scanned = scan_error is None
+        if scan_error:
+            failed_pages += 1
+            page.error = scan_error
         run.progress = min(67, run.progress + 8)
         save_audit_run(run)
+
+    # Record partial results explicitly instead of failing silently.
+    partial_notes = []
+    if failed_pages:
+        partial_notes.append(f"{failed_pages} page(s) could not be scanned after retry; this report is partial.")
+    if failed_documents:
+        partial_notes.append(f"{failed_documents} linked document(s) could not be parsed; this report is partial.")
+    if partial_notes:
+        run.safetyNotes = list(dict.fromkeys([*run.safetyNotes, *partial_notes]))
 
     # Deduplicate before saving
     run.findings = _deduplicate_findings(raw_findings)
@@ -144,6 +207,9 @@ def run_audit(
     run.progress = 84
     save_audit_run(run)
 
+    if _cancel_requested(run):
+        return save_audit_run(run)
+
     # --- AI Enhancement (Google ADK / Gemini) ---
     # Best-effort: rewrites the narrative with Gemini when GOOGLE_API_KEY is set;
     # otherwise leaves the deterministic text untouched and records why.
@@ -155,9 +221,15 @@ def run_audit(
     run.progress = 88
     save_audit_run(run)
 
+    if _cancel_requested(run):
+        return save_audit_run(run)
+
     # --- Report Export ---
     _set_step(run, "Report Export", "running", "Generating HTML report artifacts.")
-    run.artifacts = generate_report(run)
+    try:
+        run.artifacts = generate_report(run)
+    except Exception as exc:
+        return _fail_run(run, "Report Export", "Report generation failed.", f"Report generation failed: {exc}")
     run.status = "report-ready"
     run.progress = 100
     run.updatedAt = now_iso()

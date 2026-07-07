@@ -545,6 +545,100 @@ h4 {
   padding: 12px;
 }
 
+.partial-results {
+  background: rgba(255, 247, 231, 0.6);
+  border: 1px solid #f1cf8d;
+  border-radius: var(--radius);
+  margin-top: 16px;
+  padding: 12px 14px;
+}
+
+.partial-results h3 {
+  align-items: center;
+  color: #7a4f0a;
+  display: flex;
+  font-size: 14px;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.partial-note {
+  color: #6b5324;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.partial-results ul {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.partial-results li {
+  border-left: 3px solid #e0a94a;
+  font-size: 13px;
+  padding-left: 10px;
+}
+
+.partial-where {
+  color: var(--muted, #6b7280);
+  word-break: break-all;
+}
+
+.partial-detail {
+  color: #4f370a;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.login-toggle {
+  margin: 10px 0 0;
+}
+
+.login-toggle label {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: 14px;
+  gap: 8px;
+}
+
+.login-fields {
+  background: rgba(240, 246, 255, 0.7);
+  border: 1px solid #c7d7f0;
+  border-radius: var(--radius);
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 14px;
+}
+
+.login-field {
+  display: grid;
+  gap: 4px;
+}
+
+.login-field span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-field input {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 14px;
+  padding: 8px 10px;
+}
+
+.login-hint {
+  color: #3a4a63;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 2px 0 0;
+}
+
 .scan-actions {
   display: grid;
   gap: 10px;
@@ -1061,6 +1155,21 @@ h4 {
 .agent-step div {
   display: grid;
   gap: 2px;
+}
+
+.step-status-text {
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.agent-step.running .step-status-text {
+  color: var(--blue);
+}
+
+.agent-step.failed .step-status-text {
+  color: var(--red);
 }
 
 .evidence-grid {

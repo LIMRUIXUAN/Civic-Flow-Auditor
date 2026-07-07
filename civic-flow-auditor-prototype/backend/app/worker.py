@@ -13,6 +13,21 @@ except Exception:  # pragma: no cover - development fallback when Celery is not 
     Celery = None
 
 
+def _run_audit_job(audit_id: str, login_email: str | None = None, login_password: str | None = None) -> dict:
+    """Run the audit and, if anything still escapes the orchestrator's own
+    guards, mark the run failed so it never strands in the 'scanning' state."""
+    try:
+        return run_audit(audit_id, login_email=login_email, login_password=login_password).model_dump(mode="json")
+    except Exception as exc:
+        from .repository import update_audit_run
+
+        try:
+            update_audit_run(audit_id, {"status": "failed", "error": f"Audit failed: {exc}"[:300]})
+        except Exception:
+            pass
+        raise
+
+
 class _EagerResult:
     id = "eager"
 
@@ -47,7 +62,7 @@ celery_app = _make_celery()
 if celery_app:
     @celery_app.task(name="run_audit_task", bind=True)
     def run_audit_task(self, audit_id: str, login_email: str | None = None, login_password: str | None = None):
-        return run_audit(audit_id, login_email=login_email, login_password=login_password).model_dump(mode="json")
+        return _run_audit_job(audit_id, login_email=login_email, login_password=login_password)
 
     @celery_app.task(name="crawl_site_task")
     def crawl_site_task(url: str, max_pages: int | None = None, same_domain_only: bool = True):
@@ -73,7 +88,7 @@ if celery_app:
 else:
     @_EagerTask
     def run_audit_task(audit_id: str, login_email: str | None = None, login_password: str | None = None):
-        return run_audit(audit_id, login_email=login_email, login_password=login_password).model_dump(mode="json")
+        return _run_audit_job(audit_id, login_email=login_email, login_password=login_password)
 
     @_EagerTask
     def crawl_site_task(url: str, max_pages: int | None = None, same_domain_only: bool = True):

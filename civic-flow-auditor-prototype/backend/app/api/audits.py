@@ -20,11 +20,12 @@ router = APIRouter()
 
 def _run_in_process(
     audit_id: str,
-    reason: str,
+    reason: str | None,
     login_email: str | None = None,
     login_password: str | None = None,
 ) -> None:
-    update_audit_run(audit_id, {"error": reason})
+    if reason:
+        update_audit_run(audit_id, {"error": reason})
 
     def run_fallback() -> None:
         try:
@@ -61,7 +62,14 @@ def _queue_audit(
 ) -> None:
     from ..worker import run_audit_task
 
-    if not settings.use_celery_eager and not _redis_available():
+    if settings.use_celery_eager:
+        # Eager Celery executes .delay() synchronously, which would block this
+        # request for the whole audit. Run it in a background thread instead so
+        # the POST returns 202 immediately and SSE can stream progress.
+        _run_in_process(audit_id, None, login_email=login_email, login_password=login_password)
+        return
+
+    if not _redis_available():
         _run_in_process(
             audit_id,
             "Background queue unavailable; running audit in this API process.",

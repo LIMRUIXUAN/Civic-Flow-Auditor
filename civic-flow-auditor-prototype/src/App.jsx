@@ -333,6 +333,9 @@ function stageResourceLabel(stage) {
 function App() {
   const [scanDepth, setScanDepth] = useState("standard");
   const [url, setUrl] = useState(demoQueryEnabled ? demoAuditRun.url : "https://example.com/");
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   const [auditRun, setAuditRun] = useState(demoQueryEnabled ? demoAuditRun : createEmptyAuditRun());
   const [selectedStage, setSelectedStage] = useState(demoQueryEnabled ? "register" : "all");
   const [selectedIssueId, setSelectedIssueId] = useState(demoQueryEnabled ? "AXE-001" : "");
@@ -342,6 +345,10 @@ function App() {
   const [history, setHistory] = useState([]);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const eventSourceRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const pollTimerRef = useRef(null);
+  const lastLiveStatusRef = useRef("idle");
 
   // Document Scan tab state
   const [activeTab, setActiveTab] = useState("website"); // "website" or "document"
@@ -360,6 +367,23 @@ function App() {
     [casePages, auditRun.documents, findings],
   );
   const agentSteps = auditRun.agentSteps;
+  const partialResults = useMemo(() => {
+    const items = [];
+    for (const page of auditRun.pages || []) {
+      if (page.error) items.push({ type: "Page scan", where: page.url, detail: page.error });
+    }
+    for (const doc of auditRun.documents || []) {
+      if (doc.error) items.push({ type: "Document", where: doc.url, detail: doc.error });
+      else if (doc.imageOnly) items.push({ type: "Document", where: doc.url, detail: "Image-only PDF; text could not be extracted automatically." });
+    }
+    for (const action of auditRun.skippedActions || []) {
+      items.push({ type: "Skipped action", where: action.url || auditRun.url, detail: `${action.action}: ${action.reason}` });
+    }
+    if (auditRun.ai?.status === "unavailable" || auditRun.ai?.status === "failed") {
+      items.push({ type: "AI enhancement", where: "", detail: auditRun.ai?.error || "AI enhancement did not run; deterministic text was kept." });
+    }
+    return items;
+  }, [auditRun.pages, auditRun.documents, auditRun.skippedActions, auditRun.ai, auditRun.url]);
   const pagesScanned = casePages.filter((page) => page.scanned).length || casePages.length;
   const isDemoAudit = backendMode === "demo";
   const aiEnhanced = auditRun.ai?.status === "enhanced";
@@ -465,6 +489,8 @@ function App() {
 
   useEffect(() => {
     return () => {
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       eventSourceRef.current?.close();
     };
   }, []);
@@ -760,46 +786,108 @@ function App() {
     }
   }
 
-  function subscribeToAudit(auditId) {
-    eventSourceRef.current?.close();
+  const TERMINAL_AUDIT_STATUSES = ["report-ready", "failed", "cancelled"];
+
+  function stopLiveUpdates() {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    reconnectAttemptsRef.current = 0;
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  }
+
+  function applyAuditUpdate(rawRun) {
+    const nextRun = mergeDocumentScanOutput(rawRun);
+    lastLiveStatusRef.current = nextRun.status;
+    setAuditRun(nextRun);
+    setBackendMode("live");
+    if (nextRun.status === "report-ready") {
+      stopLiveUpdates();
+      if (documentScanRef.current.findings.length) {
+        persistDocumentAuditRun(nextRun)
+          .then(() => setNotice("Unified website and document report is ready for review and export."))
+          .catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
+      } else {
+        setNotice("Audit report is ready for review and export.");
+      }
+    } else if (nextRun.status === "failed") {
+      stopLiveUpdates();
+      setBackendMode("failed");
+      setNotice(nextRun.error || "Audit failed. Load the demo audit only if you want sample data.");
+    } else if (nextRun.status === "cancelled") {
+      stopLiveUpdates();
+      setNotice(nextRun.error || "Audit cancelled.");
+    }
+    return nextRun;
+  }
+
+  async function pollAuditOnce(auditId) {
+    try {
+      const response = await fetch(`/api/audits/${auditId}`);
+      if (!response.ok) return null;
+      return applyAuditUpdate(await readApiResponse(response));
+    } catch {
+      return null;
+    }
+  }
+
+  function startPollingFallback(auditId) {
+    if (pollTimerRef.current) return;
+    setNotice("Live updates unavailable; checking audit progress every few seconds instead.");
+    pollAuditOnce(auditId);
+    pollTimerRef.current = setInterval(() => pollAuditOnce(auditId), 3000);
+  }
+
+  function openAuditStream(auditId) {
     const source = new EventSource(`/api/audits/${auditId}/events`);
     eventSourceRef.current = source;
 
     source.addEventListener("audit", (event) => {
-      const nextRun = mergeDocumentScanOutput(JSON.parse(event.data));
-      setAuditRun(nextRun);
-      setBackendMode("live");
-      if (nextRun.status === "report-ready") {
-        source.close();
-        if (documentScanRef.current.findings.length) {
-          persistDocumentAuditRun(nextRun)
-            .then(() => setNotice("Unified website and document report is ready for review and export."))
-            .catch((error) => setNotice(error instanceof Error ? error.message : String(error)));
-        } else {
-          setNotice("Audit report is ready for review and export.");
-        }
-      }
-      if (nextRun.status === "failed") {
-        setBackendMode("failed");
-        setNotice(nextRun.error || "Audit failed. Load the demo audit only if you want sample data.");
-        source.close();
-      }
-      if (nextRun.status === "cancelled") {
-        setNotice(nextRun.error || "Audit cancelled.");
-        source.close();
-      }
+      reconnectAttemptsRef.current = 0;
+      applyAuditUpdate(JSON.parse(event.data));
     });
 
     source.addEventListener("error", () => {
-      if (auditRun.status !== "report-ready") {
-        setNotice("Live audit updates disconnected. Use Refresh through the browser after a moment.");
-      }
       source.close();
+      if (eventSourceRef.current === source) eventSourceRef.current = null;
+      if (TERMINAL_AUDIT_STATUSES.includes(lastLiveStatusRef.current)) return;
+      const attempt = reconnectAttemptsRef.current + 1;
+      reconnectAttemptsRef.current = attempt;
+      if (attempt <= 5) {
+        pollAuditOnce(auditId); // keep the UI current while waiting to reconnect
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null;
+          if (!TERMINAL_AUDIT_STATUSES.includes(lastLiveStatusRef.current)) {
+            openAuditStream(auditId);
+          }
+        }, Math.min(500 * 2 ** attempt, 8000));
+      } else {
+        startPollingFallback(auditId);
+      }
     });
   }
 
+  function subscribeToAudit(auditId) {
+    stopLiveUpdates();
+    lastLiveStatusRef.current = "queued";
+    openAuditStream(auditId);
+  }
+
   async function startAudit() {
-    setNotice("Starting public-site audit. Forms will not be submitted.");
+    const useLogin = showLogin && loginEmail.trim() && loginPassword;
+    setNotice(
+      useLogin
+        ? "Starting authenticated audit. Only the login form is submitted; no other forms are."
+        : "Starting public-site audit. Forms will not be submitted.",
+    );
     setBackendMode("live");
     setAuditRun({
       ...createEmptyAuditRun({ url, depth: scanDepth }),
@@ -810,11 +898,17 @@ function App() {
       progress: 5,
     });
 
+    const body = { url, depth: scanDepth };
+    if (useLogin) {
+      body.login_email = loginEmail.trim();
+      body.login_password = loginPassword;
+    }
+
     try {
       const response = await fetch("/api/audits", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, depth: scanDepth }),
+        body: JSON.stringify(body),
       });
       const payload = await readApiResponse(response);
       if (!response.ok) throw new Error(payload.error || "Could not start the audit.");
@@ -835,14 +929,14 @@ function App() {
   }
 
   function resetAudit() {
-    eventSourceRef.current?.close();
+    stopLiveUpdates();
     setBackendMode(backendStatus === "offline" ? "offline" : "empty");
     setAuditRun(createEmptyAuditRun({ url, depth: scanDepth, status: "idle", progress: 0 }));
     setNotice("Ready for a new public URL.");
   }
 
   function loadDemoAudit() {
-    eventSourceRef.current?.close();
+    stopLiveUpdates();
     const demo = createDemoAuditRun({ url: demoAuditRun.url, depth: scanDepth, status: "report-ready", progress: 100 });
     setBackendMode("demo");
     setAuditRun(demo);
@@ -887,7 +981,7 @@ function App() {
   }
 
   async function loadHistoryAudit(auditId) {
-    eventSourceRef.current?.close();
+    stopLiveUpdates();
     try {
       const response = await fetch(`/api/audits/${auditId}`);
       const payload = await readApiResponse(response);
@@ -1077,9 +1171,51 @@ function App() {
                   </button>
                 ))}
               </div>
+              <div className="login-toggle">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showLogin}
+                    onChange={(event) => setShowLogin(event.target.checked)}
+                    disabled={isRunning}
+                  />
+                  <span>Audit pages that require sign-in (optional)</span>
+                </label>
+              </div>
+              {showLogin ? (
+                <div className="login-fields" role="group" aria-label="Login credentials for authenticated crawl">
+                  <label className="login-field">
+                    <span>Login email or username</span>
+                    <input
+                      type="text"
+                      autoComplete="off"
+                      value={loginEmail}
+                      onChange={(event) => setLoginEmail(event.target.value)}
+                      disabled={isRunning}
+                      placeholder="resident@example.gov"
+                    />
+                  </label>
+                  <label className="login-field">
+                    <span>Password</span>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={loginPassword}
+                      onChange={(event) => setLoginPassword(event.target.value)}
+                      disabled={isRunning}
+                      placeholder="••••••••"
+                    />
+                  </label>
+                  <p className="login-hint">
+                    Credentials are sent once to open an authenticated crawl session and are never stored.
+                    The agent submits only the login form — no other forms are submitted. Do not use a real
+                    resident's personal account.
+                  </p>
+                </div>
+              ) : null}
               <div className="safety-line">
                 <ShieldCheck size={18} />
-                <span>Draft assistance report, not legal certification. No forms are submitted.</span>
+                <span>Draft assistance report, not legal certification. No forms are submitted{showLogin ? " except the login form you provide" : ""}.</span>
               </div>
               <div className="scan-actions">
                 <button className="primary-button" type="button" onClick={startAudit} disabled={isRunning}>
@@ -1295,8 +1431,15 @@ function App() {
         </div>
         <div className="progress-cell">
           <span className={isRunning ? "live-dot" : "pause-dot"} aria-hidden="true" />
-          <strong>{statusLabel(auditRun.status)}</strong>
-          <div className="progress-track">
+          <strong role="status" aria-live="polite">{statusLabel(auditRun.status)}</strong>
+          <div
+            className="progress-track"
+            role="progressbar"
+            aria-label="Audit progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.max(auditRun.progress || 0, 0)}
+          >
             <span style={{ width: `${Math.max(auditRun.progress || 0, 0)}%` }} />
           </div>
         </div>
@@ -1417,14 +1560,35 @@ function App() {
             <h3>Full backend agent flow</h3>
             {agentSteps.map((step, index) => (
               <div className={`agent-step ${step.status}`} key={step.name}>
-                <span>{index + 1}</span>
+                <span aria-hidden="true">{index + 1}</span>
                 <div>
-                  <strong>{step.name}</strong>
+                  <strong>
+                    {step.name}
+                    <span className="step-status-text"> — {step.status}</span>
+                  </strong>
                   <small>{step.detail}</small>
                 </div>
               </div>
             ))}
           </div>
+          {partialResults.length ? (
+            <div className="partial-results" role="group" aria-label="Skipped and failed steps">
+              <h3>
+                <TriangleAlert size={16} />
+                Skipped and failed steps ({partialResults.length})
+              </h3>
+              <p className="partial-note">These items could not be completed automatically. Findings are partial for them and need manual review.</p>
+              <ul>
+                {partialResults.map((item, index) => (
+                  <li key={index}>
+                    <strong>{item.type}</strong>
+                    {item.where ? <span className="partial-where"> · {item.where}</span> : null}
+                    <div className="partial-detail">{item.detail}</div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
 
         <aside className="evidence-panel" aria-labelledby="evidence-heading">
