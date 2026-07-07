@@ -1841,9 +1841,9 @@ h4 {
   background: rgba(255, 255, 255, 0.5);
 }
 
-.nvidia-badge-inline {
-  background: #76b900;
-  color: #000;
+.ai-badge-inline {
+  background: #4285f4;
+  color: #fff;
   font-size: 10px;
   font-weight: 800;
   padding: 2px 6px;
@@ -2267,7 +2267,7 @@ h4 {
     width: 100%;
   }
 
-  .nvidia-badge-inline {
+  .ai-badge-inline {
     margin-left: 0;
     white-space: normal;
   }

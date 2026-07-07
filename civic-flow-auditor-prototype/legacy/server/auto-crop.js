@@ -11,12 +11,12 @@ export async function cropDocumentImage(imagePathOrBase64, { paddingPercent = 5 
     base64Data = `data:image/png;base64,${bytes.toString("base64")}`;
   }
 
-  // 1. Get bounds from NVIDIA Vision
+  // 1. Get bounds from Gemini Vision
   let bounds = { x: 0, y: 0, width: 100, height: 100 };
   try {
     bounds = await identifyCropBounds(base64Data);
   } catch (error) {
-    console.error("NVIDIA crop bounds failed, using full size", error);
+    console.error("Gemini crop bounds failed, using full size", error);
   }
 
   // 2. Launch browser to perform the crop

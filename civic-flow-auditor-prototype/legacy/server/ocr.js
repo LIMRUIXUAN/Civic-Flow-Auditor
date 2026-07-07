@@ -24,17 +24,17 @@ export async function ocrPdfFirstPages(buffer, { pagesLimit = 2 } = {}) {
     const textParts = [];
     let methodUsed = "tesseract";
 
-    // Try NVIDIA Vision API first
-    if (config.aiProvider === "openrouter" && config.openRouterApiKey) {
+    // Try Google Gemini Vision API first
+    if (config.aiProvider === "google" && config.googleApiKey) {
       try {
         for (const page of pages) {
           const base64 = Buffer.from(page.data).toString("base64");
           const result = await analyzeDocumentImage(base64);
           textParts.push(result.full_text || "");
         }
-        methodUsed = "nvidia-vision";
+        methodUsed = "gemini";
       } catch (visionError) {
-        console.warn("NVIDIA Vision OCR failed, falling back to local Tesseract:", visionError.message);
+        console.warn("Gemini Vision OCR failed, falling back to local Tesseract:", visionError.message);
       }
     }
 

@@ -42,7 +42,7 @@ def test_create_audit_returns_json_when_queue_broker_is_unavailable(monkeypatch,
     from app.repository import load_audit_run, save_audit_run
 
     class FailingTask:
-        def delay(self, audit_id):
+        def delay(self, audit_id, **_kwargs):
             raise RuntimeError("broker unavailable")
 
     class ImmediateThread:
@@ -52,7 +52,7 @@ def test_create_audit_returns_json_when_queue_broker_is_unavailable(monkeypatch,
         def start(self):
             self.target()
 
-    def fake_run_audit(audit_id):
+    def fake_run_audit(audit_id, login_email=None, login_password=None):
         run = load_audit_run(audit_id)
         run.status = "report-ready"
         run.progress = 100

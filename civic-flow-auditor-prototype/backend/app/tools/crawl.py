@@ -50,69 +50,192 @@ def _clean_filename(url: str, index: int) -> str:
     return f"page-{str(index).zfill(2)}-{slug[:50]}.png"
 
 
-def _try_login(page: object, login_email: str, login_password: str) -> bool:
-    """Attempt to fill email + password fields and click submit. Returns True if attempted."""
-    email_selectors = [
-        'input[type="email"]',
-        'input[name="email"]',
-        'input[name="username"]',
-        'input[name="user"]',
-        'input[id*="email"]',
-        'input[placeholder*="email" i]',
-        'input[placeholder*="username" i]',
-    ]
-    password_selectors = [
-        'input[type="password"]',
-        'input[name="password"]',
-        'input[id*="password"]',
-    ]
-    submit_selectors = [
-        'button[type="submit"]',
-        'input[type="submit"]',
-        'button:has-text("Log in")',
-        'button:has-text("Sign in")',
-        'button:has-text("Login")',
-        'button:has-text("Continue")',
-    ]
+_EMAIL_SELECTORS = [
+    'input[type="email"]',
+    'input[name="email"]',
+    'input[name="username"]',
+    'input[name="login"]',
+    'input[name="user"]',
+    'input[id*="email" i]',
+    'input[id*="username" i]',
+    'input[autocomplete="username"]',
+    'input[placeholder*="email" i]',
+    'input[placeholder*="username" i]',
+]
+_PASSWORD_SELECTORS = [
+    'input[type="password"]',
+    'input[name="password"]',
+    'input[id*="password" i]',
+    'input[autocomplete="current-password"]',
+]
+_SUBMIT_SELECTORS = [
+    'button[type="submit"]',
+    'input[type="submit"]',
+    'button:has-text("Log in")',
+    'button:has-text("Sign in")',
+    'button:has-text("Login")',
+    'button:has-text("Sign In")',
+    'button:has-text("Continue")',
+    'button:has-text("Next")',
+]
+_LOGIN_LINK_SELECTORS = [
+    'a[href*="login" i]',
+    'a[href*="signin" i]',
+    'a[href*="sign-in" i]',
+    'a[href*="log-in" i]',
+    'a[href*="account/login" i]',
+    'a[href*="auth" i]',
+    'a:has-text("Log in")',
+    'a:has-text("Login")',
+    'a:has-text("Sign in")',
+    'a:has-text("Sign In")',
+]
+_COMMON_LOGIN_PATHS = [
+    "/login",
+    "/signin",
+    "/sign-in",
+    "/account/login",
+    "/accounts/login",
+    "/users/sign_in",
+    "/auth/login",
+]
 
-    email_el = None
-    for sel in email_selectors:
+
+def _first_visible(page: object, selectors: list[str], timeout: int = 600) -> object | None:
+    for sel in selectors:
         try:
             el = page.locator(sel).first
-            if el.is_visible(timeout=800):
-                email_el = el
-                break
+            if el.is_visible(timeout=timeout):
+                return el
         except Exception:
             continue
+    return None
 
-    pw_el = None
-    for sel in password_selectors:
-        try:
-            el = page.locator(sel).first
-            if el.is_visible(timeout=800):
-                pw_el = el
-                break
-        except Exception:
-            continue
 
-    if not email_el or not pw_el:
+def _password_visible(page: object) -> bool:
+    return _first_visible(page, _PASSWORD_SELECTORS, timeout=400) is not None
+
+
+def _fill_and_submit(page: object, login_email: str, login_password: str) -> bool:
+    """Fill the login form on the current page and submit it.
+
+    Handles both single-step forms and two-step flows where the password field
+    only appears after the email is entered and a "Continue"/"Next" button is
+    clicked. Returns True when a submit was actually attempted.
+    """
+    email_el = _first_visible(page, _EMAIL_SELECTORS)
+    if not email_el:
         return False
 
     try:
         email_el.fill(login_email)
-        pw_el.fill(login_password)
-        for sel in submit_selectors:
-            try:
-                btn = page.locator(sel).first
-                if btn.is_visible(timeout=500):
-                    btn.click()
-                    page.wait_for_load_state("networkidle", timeout=8000)
-                    return True
-            except Exception:
-                continue
     except Exception:
-        pass
-    return False
+        return False
+
+    pw_el = _first_visible(page, _PASSWORD_SELECTORS, timeout=400)
+    if not pw_el:
+        # Two-step flow: submit the email to reveal the password field.
+        advance = _first_visible(page, _SUBMIT_SELECTORS, timeout=400)
+        if advance:
+            try:
+                advance.click()
+                page.wait_for_timeout(1200)
+            except Exception:
+                pass
+        pw_el = _first_visible(page, _PASSWORD_SELECTORS, timeout=1500)
+
+    if not pw_el:
+        return False
+
+    try:
+        pw_el.fill(login_password)
+    except Exception:
+        return False
+
+    submit = _first_visible(page, _SUBMIT_SELECTORS, timeout=600)
+    try:
+        if submit:
+            submit.click()
+        else:
+            pw_el.press("Enter")
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _perform_login(
+    context: object, base_url: str, login_email: str, login_password: str
+) -> tuple[bool, str | None, str]:
+    """Authenticate the browser context before crawling.
+
+    Strategy: try the landing page, then any discoverable login link, then a set
+    of common login paths. Cookies persist in ``context`` so every subsequent
+    page in the crawl is fetched as the authenticated user.
+
+    Returns ``(success, landing_url, note)`` where ``landing_url`` is the URL the
+    site redirected to after login (worth crawling — often a dashboard/profile).
+    """
+    page = context.new_page()
+    page.on("dialog", lambda d: d.dismiss())
+    note = "No login form was found; crawled as an anonymous visitor."
+    landing_url: str | None = None
+
+    def _attempt() -> bool:
+        try:
+            page.wait_for_load_state("networkidle", timeout=4000)
+        except Exception:
+            pass
+        return _fill_and_submit(page, login_email, login_password)
+
+    try:
+        page.goto(base_url, wait_until="domcontentloaded", timeout=18000)
+        submitted = _attempt()
+
+        # Not on a login page yet — follow a login link if one exists.
+        if not submitted:
+            link = _first_visible(page, _LOGIN_LINK_SELECTORS, timeout=800)
+            if link:
+                try:
+                    link.click()
+                    page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    submitted = _attempt()
+                except Exception:
+                    submitted = False
+
+        # Still nothing — probe common login URLs.
+        if not submitted:
+            for path in _COMMON_LOGIN_PATHS:
+                try:
+                    page.goto(urljoin(base_url, path), wait_until="domcontentloaded", timeout=12000)
+                except Exception:
+                    continue
+                if _fill_and_submit(page, login_email, login_password):
+                    submitted = True
+                    break
+
+        if submitted:
+            landing_url = page.url
+            success = not _password_visible(page)
+            note = (
+                f"Logged in and landed on {landing_url}."
+                if success
+                else "Login form was submitted but a password field is still visible; "
+                "credentials may be incorrect or an extra step (e.g. MFA) is required."
+            )
+            return success, landing_url, note
+    except Exception as exc:
+        note = f"Login attempt failed: {exc}"
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
+
+    return False, landing_url, note
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +256,7 @@ def _crawl_with_playwright(
     pages: list[PageSnapshot] = []
     documents: list[dict] = []
     errors: list[str] = []
+    login_notes: list[str] = []
     visited: set[str] = set()
     queued: list[str] = [url]
 
@@ -143,20 +267,14 @@ def _crawl_with_playwright(
             ignore_https_errors=True,
         )
 
-        # Perform login before crawling if credentials provided
+        # Authenticate the whole browser context before crawling if credentials
+        # were provided. Cookies persist so protected pages become crawlable.
         if login_email and login_password:
-            login_page = context.new_page()
-            try:
-                login_page.goto(url, wait_until="domcontentloaded", timeout=18000)
-                try:
-                    login_page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass
-                _try_login(login_page, login_email, login_password)
-            except Exception:
-                pass
-            finally:
-                login_page.close()
+            success, landing_url, note = _perform_login(context, url, login_email, login_password)
+            login_notes.append(note)
+            if landing_url and is_same_domain(url, landing_url) and landing_url not in queued:
+                # Crawl the post-login landing page (dashboard / profile) first.
+                queued.insert(0, landing_url)
 
         while queued and len(pages) < limit:
             current = queued.pop(0)
@@ -284,6 +402,7 @@ def _crawl_with_playwright(
         "pages": [p.model_dump(mode="json") for p in pages],
         "documents": documents,
         "crawlErrors": errors,
+        "loginNotes": login_notes,
         "skippedActions": [],
     }
 

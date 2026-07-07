@@ -10,7 +10,7 @@ AuditStatus = Literal["idle", "queued", "validating", "scanning", "report-ready"
 StepStatus = Literal["queued", "running", "complete", "failed", "cancelled"]
 Severity = Literal["Critical", "High", "Medium", "Low"]
 OcrStatus = Literal["not-needed", "not-run", "complete", "unavailable", "failed"]
-AiProvider = Literal["none", "openrouter"]
+AiProvider = Literal["none", "google"]
 AiStatus = Literal["deterministic", "pending", "enhanced", "unavailable", "failed"]
 
 SAFETY_NOTES = [

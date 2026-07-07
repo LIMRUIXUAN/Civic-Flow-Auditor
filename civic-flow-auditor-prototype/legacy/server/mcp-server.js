@@ -78,7 +78,7 @@ export function createCivicFlowMcpServer() {
     "crop_document_image",
     {
       title: "Crop document image",
-      description: "Auto-crop printed document photo using NVIDIA Vision model detection.",
+      description: "Auto-crop printed document photo using Gemini Vision model detection.",
       inputSchema: {
         image_path: z.string().describe("Local filesystem path to document image or base64 data."),
         padding_percent: z.number().min(0).max(20).default(5).describe("Percentage padding around bounds."),

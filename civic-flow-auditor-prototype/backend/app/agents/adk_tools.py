@@ -14,7 +14,12 @@ except Exception:  # pragma: no cover - allows local setup before google-adk is 
 
 
 def _tool(fn: Callable[..., Any]) -> Any:
-    return FunctionTool(fn) if FunctionTool else fn
+    if not FunctionTool:
+        return fn
+    try:
+        return FunctionTool(fn)
+    except Exception:  # pragma: no cover - SDK signature-introspection guard
+        return fn
 
 
 crawl_site_tool = _tool(crawl_site)

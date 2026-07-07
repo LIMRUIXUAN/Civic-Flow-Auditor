@@ -35,25 +35,23 @@ test("enhanceAuditRunWithAi keeps deterministic output when AI provider is none"
   assert.match(result.executiveSummary, /not legal certification/i);
 });
 
-test("enhanceAuditRunWithAi falls back without leaking OpenRouter key", async () => {
+test("enhanceAuditRunWithAi falls back without leaking the Google API key", async () => {
   const original = {
     aiProvider: config.aiProvider,
-    openRouterApiKey: config.openRouterApiKey,
-    openRouterModel: config.openRouterModel,
+    googleApiKey: config.googleApiKey,
   };
-  config.aiProvider = "openrouter";
-  config.openRouterApiKey = "sk-test-secret";
-  config.openRouterModel = "openrouter/free";
+  config.aiProvider = "google";
+  config.googleApiKey = "test-secret-key";
 
   const result = await enhanceAuditRunWithAi(sampleRun(), {
     fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({}) }),
   });
 
   config.aiProvider = original.aiProvider;
-  config.openRouterApiKey = original.openRouterApiKey;
-  config.openRouterModel = original.openRouterModel;
+  config.googleApiKey = original.googleApiKey;
 
   assert.equal(result.ai.status, "failed");
+  assert.equal(result.ai.provider, "google");
   assert.match(result.executiveSummary, /not legal certification/i);
-  assert.equal(JSON.stringify(result).includes("sk-test-secret"), false);
+  assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
 });

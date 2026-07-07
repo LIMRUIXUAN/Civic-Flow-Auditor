@@ -5,16 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "dev:api": "node server/api.js",
-    "server": "node server/api.js",
-    "start": "node server/api.js",
+    "dev:api": "npm --prefix backend run dev:api",
+    "worker": "npm --prefix backend run worker",
+    "start": "npm --prefix backend run dev:api",
     "build": "vite build",
-    "render:build": "npx playwright install chromium && npm run build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test",
-    "smoke:audit": "node server/smoke-audit.js",
-    "mcp:start": "node server/mcp-server.js",
-    "mcp:inspect": "npx @modelcontextprotocol/inspector node server/mcp-server.js"
+    "test": "npm --prefix backend run test",
+    "python:install": "pip install -r backend/requirements.txt",
+    "python:playwright": "playwright install chromium"
   },
   "dependencies": {
     "@axe-core/playwright": "^4.12.1",

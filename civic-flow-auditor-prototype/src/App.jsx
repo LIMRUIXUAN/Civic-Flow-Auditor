@@ -378,8 +378,8 @@ function App() {
       Boolean(auditRun.artifacts?.screenshots?.length) ||
       scannedImages.some((image) => image.croppedImageUrl));
   const scanEngineLabel =
-    activeScanImage?.method === "nvidia-vision"
-      ? "NVIDIA Vision"
+    activeScanImage?.method === "gemini"
+      ? "Gemini Vision"
       : activeScanImage?.method === "tesseract"
         ? "Tesseract fallback"
         : auditRun.scanner?.ocr?.status === "complete"
@@ -1044,7 +1044,7 @@ function App() {
             >
               <FileSearch size={18} />
               Document intake
-              <span className="nvidia-badge-inline">NVIDIA Nemotron</span>
+              <span className="ai-badge-inline">Google Gemini</span>
             </button>
           </div>
 
@@ -1193,7 +1193,7 @@ function App() {
                           </div>
                           <div className="power-tag">
                             <span className="power-dot" />
-                            <span>{activeImage.method === "tesseract" ? "Tesseract fallback used" : "NVIDIA Nemotron-3 Nano Omni vision"}</span>
+                            <span>{activeImage.method === "tesseract" ? "Tesseract fallback used" : "Google Gemini vision"}</span>
                           </div>
                           <div className="scan-status-row" aria-label="Document scan status">
                             <span>{aiStatusLabel(activeImage.aiReasoning?.status)}</span>

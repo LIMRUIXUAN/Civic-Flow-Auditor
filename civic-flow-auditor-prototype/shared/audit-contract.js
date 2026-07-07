@@ -131,7 +131,7 @@ export const SkippedActionSchema = z.object({
 
 export const AiMetadataSchema = z
   .object({
-    provider: z.enum(["none", "openrouter"]).default("none"),
+    provider: z.enum(["none", "google"]).default("none"),
     model: z.string().default("deterministic"),
     status: z.enum(["deterministic", "pending", "enhanced", "unavailable", "failed"]).default("deterministic"),
     generatedFields: z.array(z.string()).default([]),

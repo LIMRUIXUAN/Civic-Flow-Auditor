@@ -6,11 +6,11 @@ import { config } from "../server/config.js";
 test("buildDocumentScanFindings uses deterministic fallback without leaking API keys", async () => {
   const original = {
     aiProvider: config.aiProvider,
-    openRouterApiKey: config.openRouterApiKey,
+    googleApiKey: config.googleApiKey,
   };
   try {
     config.aiProvider = "none";
-    config.openRouterApiKey = "sk-test-secret";
+    config.googleApiKey = "test-secret-key";
 
     const result = await buildDocumentScanFindings({
       croppedImageUrl: "/artifacts/doc-scan/crop.png",
@@ -34,21 +34,21 @@ test("buildDocumentScanFindings uses deterministic fallback without leaking API 
     assert.equal(result.findings.length, 1);
     assert.equal(result.findings[0].severity, "Critical");
     assert.equal(result.findings[0].guidelineRefs.some((ref) => ref.url.includes("WCAG22")), true);
-    assert.equal(JSON.stringify(result).includes("sk-test-secret"), false);
+    assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
   } finally {
     config.aiProvider = original.aiProvider;
-    config.openRouterApiKey = original.openRouterApiKey;
+    config.googleApiKey = original.googleApiKey;
   }
 });
 
 test("buildRefinedDocumentFindingPatch returns complete deterministic metadata", async () => {
   const original = {
     aiProvider: config.aiProvider,
-    openRouterApiKey: config.openRouterApiKey,
+    googleApiKey: config.googleApiKey,
   };
   try {
     config.aiProvider = "none";
-    config.openRouterApiKey = "sk-test-secret";
+    config.googleApiKey = "test-secret-key";
 
     const result = await buildRefinedDocumentFindingPatch({
       findingId: "DOC-case-001",
@@ -79,23 +79,23 @@ test("buildRefinedDocumentFindingPatch returns complete deterministic metadata",
     assert.equal(result.findingPatch.guidelineRefs.some((ref) => ref.url.includes("WCAG22")), true);
     assert.match(result.findingPatch.ticket, /Priority: High/);
     assert.match(result.findingPatch.humanReviewNote, /human accessibility review/i);
-    assert.equal(JSON.stringify(result).includes("sk-test-secret"), false);
+    assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
   } finally {
     config.aiProvider = original.aiProvider;
-    config.openRouterApiKey = original.openRouterApiKey;
+    config.googleApiKey = original.googleApiKey;
   }
 });
 
-test("buildRefinedDocumentFindingPatch uses mocked OpenRouter refinement when available", async () => {
+test("buildRefinedDocumentFindingPatch uses mocked Gemini refinement when available", async () => {
   const original = {
     aiProvider: config.aiProvider,
-    openRouterApiKey: config.openRouterApiKey,
+    googleApiKey: config.googleApiKey,
     textModel: config.textModel,
   };
   try {
-    config.aiProvider = "openrouter";
-    config.openRouterApiKey = "sk-test-secret";
-    config.textModel = "nvidia/nemotron-ultra-test";
+    config.aiProvider = "google";
+    config.googleApiKey = "test-secret-key";
+    config.textModel = "gemini-2.0-flash";
 
     const result = await buildRefinedDocumentFindingPatch({
       findingId: "DOC-case-002",
@@ -115,22 +115,26 @@ test("buildRefinedDocumentFindingPatch uses mocked OpenRouter refinement when av
         ok: true,
         async json() {
           return {
-            choices: [
+            candidates: [
               {
-                message: {
-                  content: JSON.stringify({
-                    regions: [
-                      {
-                        label: "1",
-                        title: "Deadline notice needs semantic emphasis",
-                        severity: "High",
-                        guideline: "WCAG 2.2 1.4.3",
-                        impact: "Low-vision residents may miss the filing deadline.",
-                        fix: "Publish selectable text with sufficient contrast and semantic emphasis.",
-                        humanReviewNote: "Verify the deadline language with a human reviewer before publication.",
-                      },
-                    ],
-                  }),
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        regions: [
+                          {
+                            label: "1",
+                            title: "Deadline notice needs semantic emphasis",
+                            severity: "High",
+                            guideline: "WCAG 2.2 1.4.3",
+                            impact: "Low-vision residents may miss the filing deadline.",
+                            fix: "Publish selectable text with sufficient contrast and semantic emphasis.",
+                            humanReviewNote: "Verify the deadline language with a human reviewer before publication.",
+                          },
+                        ],
+                      }),
+                    },
+                  ],
                 },
               },
             ],
@@ -140,14 +144,14 @@ test("buildRefinedDocumentFindingPatch uses mocked OpenRouter refinement when av
     });
 
     assert.equal(result.aiReasoning.status, "enhanced");
-    assert.equal(result.aiReasoning.model, "nvidia/nemotron-ultra-test");
+    assert.equal(result.aiReasoning.model, "gemini-2.0-flash");
     assert.equal(result.findingPatch.title, "Deadline notice needs semantic emphasis");
     assert.equal(result.findingPatch.severity, "High");
     assert.match(result.findingPatch.ticket, /WCAG: WCAG 2.2 1.4.3/);
-    assert.equal(JSON.stringify(result).includes("sk-test-secret"), false);
+    assert.equal(JSON.stringify(result).includes("test-secret-key"), false);
   } finally {
     config.aiProvider = original.aiProvider;
-    config.openRouterApiKey = original.openRouterApiKey;
+    config.googleApiKey = original.googleApiKey;
     config.textModel = original.textModel;
   }
 });

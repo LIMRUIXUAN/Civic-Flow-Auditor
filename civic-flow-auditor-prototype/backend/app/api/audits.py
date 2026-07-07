@@ -87,14 +87,17 @@ def _queue_audit(
 def health() -> dict[str, Any]:
     from ..config import settings
 
+    from ..agents.adk_agent import ai_configured
+
     return {
         "ok": True,
         "service": "civic-flow-auditor-python",
-        "adk": "python",
+        "adk": "google-adk",
         "queue": "celery",
         "maxPages": settings.max_pages,
         "aiProvider": settings.ai_provider,
-        "openRouterConfigured": bool(settings.openrouter_api_key),
+        "aiModel": settings.text_model,
+        "googleConfigured": ai_configured(),
         "ocr": "enabled" if settings.enable_ocr else "disabled",
     }
 
@@ -146,9 +149,18 @@ def enhance_audit(audit_id: str) -> dict[str, Any]:
         run = load_audit_run(audit_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail={"error": "Audit run not found."}) from exc
+    from ..agents.adk_agent import enhance_audit_run
+
     run.executiveSummary = run.executiveSummary or build_deterministic_summary(run)
-    run.ai.status = "deterministic"
-    run.ai.generatedFields = ["executiveSummary"]
+    try:
+        run = enhance_audit_run(run)
+    except Exception as exc:  # keep deterministic output on any AI failure
+        run.ai.status = "failed"
+        run.ai.error = str(exc)[:300]
+    # Regenerate report artifacts so the enhanced narrative is reflected on disk.
+    from ..tools.reporting import generate_report
+
+    run.artifacts = generate_report(run)
     saved = save_audit_run(run)
     return saved.model_dump(mode="json")
 

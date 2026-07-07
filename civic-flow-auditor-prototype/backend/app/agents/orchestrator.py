@@ -16,6 +16,7 @@ from ..tools.accessibility import scan_accessibility
 from ..tools.crawl import crawl_site
 from ..tools.documents import parse_document
 from ..tools.reporting import generate_report
+from .adk_agent import enhance_audit_run
 
 
 def _steps() -> list[AgentStep]:
@@ -105,6 +106,9 @@ def run_audit(
         for doc in crawl.get("documents", [])
     ]
     run.skippedActions = crawl.get("skippedActions", [])
+    for note in crawl.get("loginNotes", []):
+        if note:
+            run.safetyNotes = list(dict.fromkeys([*run.safetyNotes, f"Authenticated crawl: {note}"]))
     run.progress = 32
     _set_step(run, "Discovery", "complete", f"{len(run.pages)} pages and {len(run.documents)} documents found.")
     save_audit_run(run)
@@ -137,6 +141,17 @@ def run_audit(
     # --- Remediation ---
     _set_step(run, "Remediation", "complete", "Findings mapped to resident impact, WCAG guidance, and tickets.")
     run.executiveSummary = build_deterministic_summary(run)
+    run.progress = 84
+    save_audit_run(run)
+
+    # --- AI Enhancement (Google ADK / Gemini) ---
+    # Best-effort: rewrites the narrative with Gemini when GOOGLE_API_KEY is set;
+    # otherwise leaves the deterministic text untouched and records why.
+    try:
+        run = enhance_audit_run(run)
+    except Exception as exc:  # never let AI failure abort the audit
+        run.ai.status = "failed"
+        run.ai.error = str(exc)[:300]
     run.progress = 88
     save_audit_run(run)
 

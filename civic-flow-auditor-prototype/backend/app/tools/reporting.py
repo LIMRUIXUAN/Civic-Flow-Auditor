@@ -45,6 +45,70 @@ def _occurrence_badge(finding: Finding) -> str:
     return f' <span class="badge" title="This issue was found on {count} pages">×{count} pages</span>'
 
 
+def build_ai_fix_prompt(finding: Finding, run_url: str = "") -> str:
+    """Build a copy-paste prompt a developer can hand to any AI assistant to get a
+    concrete, code-level fix for a single accessibility finding."""
+    lines = [
+        "You are a senior web accessibility engineer. Fix the WCAG accessibility issue below.",
+        "",
+        f"Issue: {finding.title}",
+        f"Severity: {finding.severity}",
+        f"Journey stage: {finding.stageLabel}",
+        f"WCAG guideline: {finding.guideline}",
+    ]
+    if finding.url or run_url:
+        lines.append(f"Page URL: {finding.url or run_url}")
+    if finding.selector:
+        lines.append(f"Element selector: {finding.selector}")
+    lines.append(f"Resident impact: {finding.impact}")
+    lines.append(f"Baseline recommended fix: {finding.fix}")
+    if finding.sourceSnippet:
+        snippet = " ".join(finding.sourceSnippet.split())[:600]
+        lines += ["Offending HTML / source:", snippet]
+    lines += [
+        "",
+        "Respond with:",
+        "1. The root cause in one sentence.",
+        "2. Corrected, accessible HTML/ARIA/CSS for this specific element.",
+        "3. How to verify the fix with a screen reader and keyboard-only navigation.",
+        "Do not claim legal or WCAG certification; this assists human review.",
+    ]
+    return "\n".join(lines)
+
+
+# Injected once at the end of the report; powers the per-finding "Copy" buttons.
+_COPY_SCRIPT = """
+<script>
+function copyPrompt(id, btn) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var text = el.textContent;
+  var done = function () {
+    var original = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(function () { btn.textContent = original; }, 1500);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text, done); });
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+  done();
+}
+</script>
+"""
+
+
 def build_report_html(run: AuditRun) -> str:
     severity_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     sorted_findings = sorted(run.findings, key=lambda f: severity_order.get(f.severity, 9))
@@ -54,6 +118,14 @@ def build_report_html(run: AuditRun) -> str:
         color = _severity_color(f.severity)
         screenshot = _screenshot_html(f)
         badge = _occurrence_badge(f)
+        prompt_text = build_ai_fix_prompt(f, run.url)
+        prompt_block = (
+            f'<div class="ai-prompt-block">'
+            f'<div class="ai-prompt-head"><span>🤖 AI fix prompt — paste into any AI assistant</span>'
+            f'<button type="button" class="copy-btn" onclick="copyPrompt(\'prompt-{i}\', this)">Copy</button></div>'
+            f'<pre class="ai-prompt" id="prompt-{i}">{escape(prompt_text)}</pre>'
+            f'</div>'
+        )
         finding_sections.append(f"""
 <div class="finding" id="finding-{i}">
   <div class="finding-header" style="border-left:5px solid {color}">
@@ -71,6 +143,7 @@ def build_report_html(run: AuditRun) -> str:
     {f'<p><b>Source:</b> <code class="snippet">{escape((f.sourceSnippet or "")[:200])}</code></p>' if f.sourceSnippet else ''}
     {f'<p class="human-note"><em>{escape(f.humanReviewNote)}</em></p>' if f.humanReviewNote else ''}
     {screenshot}
+    {prompt_block}
   </div>
 </div>""")
 
@@ -130,6 +203,11 @@ def build_report_html(run: AuditRun) -> str:
   .screenshot-wrap {{ margin-top: 10px; }}
   .missing-note {{ background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px; padding: 10px 14px; margin: 12px 0; font-size: .88rem; }}
   .missing-note ul {{ margin: 6px 0 0 0; padding-left: 18px; }}
+  .ai-prompt-block {{ margin-top: 12px; border: 1px solid #c7d2fe; border-radius: 8px; overflow: hidden; }}
+  .ai-prompt-head {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #eef2ff; padding: 6px 12px; font-size: .82rem; font-weight: 600; color: #3730a3; }}
+  .copy-btn {{ background: #4f46e5; color: #fff; border: none; border-radius: 4px; padding: 3px 14px; font-size: .78rem; cursor: pointer; }}
+  .copy-btn:hover {{ background: #4338ca; }}
+  .ai-prompt {{ margin: 0; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: .8rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; max-height: 340px; overflow: auto; }}
   footer {{ margin-top: 32px; color: #9ca3af; font-size: .82rem; }}
   @media (max-width:600px) {{ body {{ padding: 12px; }} .container {{ padding: 16px; }} }}
 </style>
@@ -178,6 +256,7 @@ def build_report_html(run: AuditRun) -> str:
     accessibility professionals is required before making compliance claims.
   </footer>
 </div>
+{_COPY_SCRIPT}
 </body>
 </html>"""
 
@@ -195,6 +274,11 @@ def build_ticket_markdown(run: AuditRun) -> str:
             finding.ticket,
             "",
             f"Fix: {finding.fix}",
+            "",
+            "### AI fix prompt",
+            "```text",
+            build_ai_fix_prompt(finding, run.url),
+            "```",
             "",
         ])
     return "\n".join(lines)

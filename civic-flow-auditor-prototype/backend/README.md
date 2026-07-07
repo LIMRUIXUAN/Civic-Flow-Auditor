@@ -21,4 +21,4 @@ celery -A app.worker.celery_app worker --loglevel=info
 pytest
 ```
 
-Set `DATABASE_URL`, `REDIS_URL`, `OPENROUTER_API_KEY`, and model env vars in `.env` or the shell.
+Set `DATABASE_URL`, `REDIS_URL`, `GOOGLE_API_KEY` (Gemini via Google ADK), and model env vars in `.env` or the shell.

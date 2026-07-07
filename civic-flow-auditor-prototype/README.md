@@ -9,68 +9,76 @@ The project includes an API, a frontend application, and a **Model Context Proto
 - **Site Crawling & Journey Mapping**: Discovers public pages, forms, and PDFs on civic domains and classifies them into distinct stages of the citizen journey (login, register, personal info, upload, submit, etc.).
 - **Accessibility Scanning**: Leverages `axe-core` and custom checks to scan public pages for accessibility violations and renders them into annotated screenshots for easy review.
 - **Document & Form Parsing**: Extracts text from civic PDFs and detects image-only documents using OCR (`Tesseract.js`) and `pdf-parse`.
-- **Vision-based Region Analysis**: Uses NVIDIA Vision models to analyze layout regions of printed/photographed documents, providing auto-cropping and layout accessibility insights.
+- **Vision-based Region Analysis**: Uses Google Gemini vision (via the Google Agent Development Kit) to analyze layout regions of printed/photographed documents, providing auto-cropping and layout accessibility insights.
 - **Comprehensive Reporting**: Generates standalone HTML and PDF artifacts summarizing audit runs.
 - **MCP Server**: Fully compatible with the Model Context Protocol, enabling AI assistants to directly invoke tools like `crawl_site`, `scan_accessibility`, and `run_civic_flow_audit`.
 
 ## Tech Stack
 
 - **Frontend**: React 19, Vite, Lucide-React
-- **Backend**: Express, Better-SQLite3, Node.js
-- **Auditing/Scraping**: Playwright, Lighthouse, Axe-Core
-- **AI & Document processing**: `@modelcontextprotocol/sdk`, Tesseract.js, pdf-parse, Zod
+- **Backend**: Python, FastAPI, Google Agent Development Kit (ADK), Celery, SQLAlchemy/SQLite
+- **AI**: Google Gemini (`gemini-2.0-flash`) driven through ADK `LlmAgent` + `Runner`
+- **Auditing/Scraping**: Playwright, Axe-Core
+- **Document processing**: pdfplumber / pypdf, Pillow
+
+> The original Node/Express backend has been migrated to Python ADK and archived under
+> [`legacy/`](legacy/README.md). It is no longer used or deployed.
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js (v18+ recommended)
-- NPM
+- Python 3.11+ (the ADK backend)
+- Node.js v18+ and NPM (frontend build + convenience run scripts)
 
 ### Installation
 
-1. Clone the repository and install dependencies:
+1. Install frontend dependencies (repo root):
    ```bash
    npm install
    ```
 
-2. Playwright browsers are required for crawling and auditing:
+2. Install the Python ADK backend dependencies:
    ```bash
-   npx playwright install chromium
+   pip install -r backend/requirements.txt
+   python -m playwright install chromium
    ```
 
 3. Environment Variables:
-   Copy `.env.example` to `.env` and fill in any required variables.
+   Copy `backend/.env.example` to `backend/.env` and set `GOOGLE_API_KEY`
+   (get one at https://aistudio.google.com/apikey). Without a key the backend
+   still runs, but produces deterministic reports instead of Gemini-enhanced ones.
    ```bash
-   cp .env.example .env
+   cp backend/.env.example backend/.env
    ```
 
 ### Running the Application
 
-You can run the different services of this prototype using the NPM scripts provided.
+The convenience NPM scripts wrap the Python backend so you can run everything from the repo root.
 
-- **Start the API Server**:
+- **Start the Python ADK API server** (FastAPI on `:8787`):
   ```bash
   npm run dev:api
   ```
-  *(Alternatively, use `npm run server` or `npm start`)*
+  *(equivalently: `cd backend && uvicorn app.main:app --host 127.0.0.1 --port 8787`)*
 
-- **Start the Frontend Application (Vite Dev Server)**:
+- **Start the frontend** (Vite dev server; proxies `/api` to `:8787`):
   ```bash
   npm run dev
   ```
 
-- **Start the MCP Server**:
-  To expose the auditing capabilities to an MCP-compatible client:
+- **Start the Celery worker** (optional — the API falls back to in-process execution):
   ```bash
-  npm run mcp:start
+  npm run worker
   ```
-  *(To inspect the MCP server, run `npm run mcp:inspect`)*
 
-- **Run a Smoke Audit**:
+- **Run the backend tests** (pytest):
   ```bash
-  npm run smoke:audit
+  npm test
   ```
+
+You can also expose the audit tools to `adk web` / `adk run`; the ADK `root_agent`
+lives in `backend/app/agents/adk_agent.py`.
 
 ### Build for Production
 

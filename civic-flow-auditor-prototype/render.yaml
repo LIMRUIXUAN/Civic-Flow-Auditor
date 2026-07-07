@@ -1,26 +1,29 @@
 services:
+  # Python Google ADK backend (FastAPI). API only — deploy the frontend (Vite
+  # build in ../dist) as a separate Render Static Site pointing /api at this URL.
   - type: web
-    name: civic-flow-auditor
-    runtime: node
+    name: civic-flow-auditor-api
+    runtime: python
     plan: starter
-    buildCommand: npm ci && npm run render:build
-    startCommand: npm start
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python -m playwright install --with-deps chromium
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: NODE_ENV
-        value: production
       - key: HOST
         value: 0.0.0.0
-      - key: PORT
-        value: 8787
-      - key: SERVE_STATIC_DIST
-        value: "1"
       - key: AUDIT_STORAGE_DIR
         value: .audit-runs
       - key: MAX_CONCURRENT_AUDITS
         value: "1"
       - key: AI_PROVIDER
-        value: none
-      - key: ENABLE_LIGHTHOUSE
-        value: "0"
+        value: google
+      # Set the actual key in the Render dashboard (kept out of source control).
+      - key: GOOGLE_API_KEY
+        sync: false
+      # Run Celery tasks inline so no Redis broker is required for a single service.
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "1"
       - key: ENABLE_OCR
         value: "1"
+      - key: ENABLE_LIGHTHOUSE
+        value: "0"

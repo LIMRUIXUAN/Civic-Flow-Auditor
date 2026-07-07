@@ -21,12 +21,23 @@ def parse_document(pdf_url: str, source_page_url: str | None = None) -> dict:
 
 
 def scan_document_image(image_base64: str) -> dict:
+    # Try Google Gemini vision (via the ADK integration) first; fall back to a
+    # deterministic single-region result when no API key / SDK is available.
+    try:
+        from ..agents.adk_agent import analyze_document_image
+
+        vision = analyze_document_image(image_base64)
+    except Exception:
+        vision = None
+    if vision and vision.get("regions"):
+        return vision
+
     return {
         "regions": [
             {
                 "label": "1",
                 "type": "Body Text",
-                "text": "OCR/vision provider is not configured in this deterministic backend path.",
+                "text": "Vision provider is not configured; set GOOGLE_API_KEY to enable Gemini document analysis.",
                 "x": 5,
                 "y": 5,
                 "width": 90,

@@ -184,7 +184,7 @@ export function createApiApp() {
       maxPages: config.maxPages,
       queue: getQueueSnapshot(),
       aiProvider: config.aiProvider,
-      openRouterConfigured: Boolean(config.openRouterApiKey),
+      googleConfigured: Boolean(config.googleApiKey),
       lighthouse: config.enableLighthouse ? "enabled" : "optional",
       ocr: config.enableOcr ? "enabled" : "disabled",
     });
@@ -200,7 +200,7 @@ export function createApiApp() {
     const documentTitle = scanDocumentTitle(uploadedFilename);
     const scanStartedAt = nowIso();
     try {
-      // 1. Crop using auto-crop (calls NVIDIA vision crop detection)
+      // 1. Crop using auto-crop (calls Gemini vision crop detection)
       const cropResult = await cropDocumentImage(image);
       const croppedBase64 = cropResult.croppedBase64;
       const croppedBuffer = cropResult.croppedBuffer;
@@ -212,15 +212,15 @@ export function createApiApp() {
       await fs.writeFile(destPath, croppedBuffer);
       const croppedImageUrl = artifactUrl("doc-scan", artifactFilename);
 
-      // 3. Analyze cropped image regions via NVIDIA Vision
+      // 3. Analyze cropped image regions via Google Gemini Vision
       let result;
-      let method = "nvidia-vision";
+      let method = "gemini";
 
-      if (config.aiProvider === "openrouter" && config.openRouterApiKey) {
+      if (config.aiProvider === "google" && config.googleApiKey) {
         try {
           result = await analyzeDocumentImage(croppedBase64);
         } catch (visionError) {
-          console.warn("NVIDIA Vision scan failed, falling back to local Tesseract:", visionError.message);
+          console.warn("Gemini Vision scan failed, falling back to local Tesseract:", visionError.message);
           method = "tesseract";
         }
       } else {
@@ -247,7 +247,7 @@ export function createApiApp() {
           ],
           full_text: ocrRes.data.text || "",
           suggestions: [
-            "The NVIDIA Vision API was unavailable. Used offline text extraction fallback.",
+            "The Gemini Vision API was unavailable. Used offline text extraction fallback.",
             "Ensure the printed document has clear, high-contrast typography and digital alternatives."
           ]
         };
@@ -306,14 +306,14 @@ export function createApiApp() {
 
     try {
       let result;
-      let method = "nvidia-vision";
+      let method = "gemini";
 
-      if (config.aiProvider === "openrouter" && config.openRouterApiKey) {
+      if (config.aiProvider === "google" && config.googleApiKey) {
         try {
           const subRegionBase64 = await cropSubRegion(image, region);
           result = await refineRegion(subRegionBase64, region.type);
         } catch (refineError) {
-          console.warn("NVIDIA refinement failed, falling back to basic:", refineError.message);
+          console.warn("Gemini refinement failed, falling back to basic:", refineError.message);
           method = "none";
         }
       } else {
@@ -323,7 +323,7 @@ export function createApiApp() {
       if (method === "none") {
         result = {
           type: region.type,
-          extracted_text: region.text || "Detailed refinement requires NVIDIA Vision API.",
+          extracted_text: region.text || "Detailed refinement requires Gemini Vision API.",
           detailed_accessibility_evaluation: "Offline mode is active. Bounding box details are unrefined.",
           remediation_fix: "Verify contrast ratios and ensure correct HTML tag representations."
         };
@@ -470,8 +470,8 @@ export function createApiApp() {
       await saveAuditRun({
         ...run,
         ai: {
-          provider: config.aiProvider === "openrouter" ? "openrouter" : "none",
-          model: config.aiProvider === "openrouter" ? config.textModel : "deterministic",
+          provider: config.aiProvider === "google" ? "google" : "none",
+          model: config.aiProvider === "google" ? config.textModel : "deterministic",
           status: "pending",
           generatedFields: [],
         },
