@@ -18,19 +18,19 @@ from ..security import validate_scan_target
 router = APIRouter()
 
 
-def _run_in_process(audit_id: str, reason: str) -> None:
-    update_audit_run(
-        audit_id,
-        {
-            "error": reason,
-        },
-    )
+def _run_in_process(
+    audit_id: str,
+    reason: str,
+    login_email: str | None = None,
+    login_password: str | None = None,
+) -> None:
+    update_audit_run(audit_id, {"error": reason})
 
     def run_fallback() -> None:
         try:
             from ..agents.orchestrator import run_audit
 
-            run_audit(audit_id)
+            run_audit(audit_id, login_email=login_email, login_password=login_password)
         except Exception as fallback_exc:
             update_audit_run(
                 audit_id,
@@ -54,19 +54,33 @@ def _redis_available() -> bool:
         return False
 
 
-def _queue_audit(audit_id: str) -> None:
+def _queue_audit(
+    audit_id: str,
+    login_email: str | None = None,
+    login_password: str | None = None,
+) -> None:
     from ..worker import run_audit_task
 
     if not settings.use_celery_eager and not _redis_available():
-        _run_in_process(audit_id, "Background queue unavailable; running audit in this API process.")
+        _run_in_process(
+            audit_id,
+            "Background queue unavailable; running audit in this API process.",
+            login_email=login_email,
+            login_password=login_password,
+        )
         return
 
     try:
-        result = run_audit_task.delay(audit_id)
+        result = run_audit_task.delay(audit_id, login_email=login_email, login_password=login_password)
         if getattr(result, "id", None):
             update_audit_run(audit_id, {"error": None})
     except Exception as exc:
-        _run_in_process(audit_id, f"Background queue unavailable; running audit in this API process. ({exc})")
+        _run_in_process(
+            audit_id,
+            f"Background queue unavailable; running audit in this API process. ({exc})",
+            login_email=login_email,
+            login_password=login_password,
+        )
 
 
 @router.get("/api/health")
@@ -98,7 +112,7 @@ def create_audit(payload: CreateAuditRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
     audit_id = uuid4().hex[:10]
     run = create_stored_audit_run(audit_id, safe_url, normalize_depth(payload.depth))
-    _queue_audit(audit_id)
+    _queue_audit(audit_id, login_email=payload.login_email, login_password=payload.login_password)
     return run.model_dump(mode="json")
 
 

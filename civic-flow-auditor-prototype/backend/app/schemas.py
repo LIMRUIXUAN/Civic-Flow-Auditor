@@ -225,6 +225,8 @@ class AuditRun(BaseModel):
 class CreateAuditRequest(BaseModel):
     url: str
     depth: str | None = "standard"
+    login_email: str | None = None
+    login_password: str | None = None
 
 
 class SaveDocumentAuditRequest(BaseModel):

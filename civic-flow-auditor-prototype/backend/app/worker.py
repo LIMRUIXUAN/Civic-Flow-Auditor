@@ -46,8 +46,8 @@ celery_app = _make_celery()
 
 if celery_app:
     @celery_app.task(name="run_audit_task", bind=True)
-    def run_audit_task(self, audit_id: str):
-        return run_audit(audit_id).model_dump(mode="json")
+    def run_audit_task(self, audit_id: str, login_email: str | None = None, login_password: str | None = None):
+        return run_audit(audit_id, login_email=login_email, login_password=login_password).model_dump(mode="json")
 
     @celery_app.task(name="crawl_site_task")
     def crawl_site_task(url: str, max_pages: int | None = None, same_domain_only: bool = True):
@@ -72,8 +72,8 @@ if celery_app:
         return generate_report(AuditRun.model_validate(audit_run)).model_dump(mode="json")
 else:
     @_EagerTask
-    def run_audit_task(audit_id: str):
-        return run_audit(audit_id).model_dump(mode="json")
+    def run_audit_task(audit_id: str, login_email: str | None = None, login_password: str | None = None):
+        return run_audit(audit_id, login_email=login_email, login_password=login_password).model_dump(mode="json")
 
     @_EagerTask
     def crawl_site_task(url: str, max_pages: int | None = None, same_domain_only: bool = True):
